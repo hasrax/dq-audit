@@ -1,0 +1,10 @@
+data/
+*.csv
+*.xlsx
+.env
+node_modules/
+__pycache__/
+.venv/
+output/
+*.pyc
+.pytest_cache/

@@ -88,7 +88,12 @@ def run_rules(directory, source_client=None, reference_date: datetime | None = N
         issue["id"] = idx
         issue["source_client"] = source_client
 
-    return {"source_client": source_client, "relationships": relationships, "issues": issues}
+    return {
+        "source_client": source_client,
+        "profiles": profiles,
+        "relationships": relationships,
+        "issues": issues,
+    }
 
 
 def summarize(result: dict) -> dict:

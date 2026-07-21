@@ -8,6 +8,7 @@ from app.profiler.sampling import build_stratified_sample
 from app.privacy.pseudonymize import (
     classify_pii_columns,
     mask_value,
+    pseudonymize_profile,
     pseudonymize_sample,
 )
 
@@ -99,6 +100,39 @@ def test_pseudonymization_preserves_repeated_identity_for_near_duplicates():
     assert by_index[0].startswith("MASK_")
     assert by_index[0] == by_index[1]
     assert by_index[0] != by_index[2]
+
+
+def test_pseudonymize_profile_masks_stats_of_pii_columns_only():
+    df = pd.DataFrame(
+        {
+            "col_1": ["Acme Distributors Ltd A", "Acme Distributors Ltd B", "Zebra Traders C"],
+            "col_2": ["100", "200", "300"],
+        }
+    )
+    profile = profile_table(df, "T")
+    pii = classify_pii_columns(df, profile)
+    safe = pseudonymize_profile(profile, pii)
+
+    # PII column: min/max and top_values keys must be masked
+    c1 = safe["columns"]["col_1"]
+    assert c1["min"].startswith("MASK_")
+    assert c1["max"].startswith("MASK_")
+    assert all(k.startswith("MASK_") for k in c1["top_values"])
+    assert not any("Acme" in k for k in c1["top_values"])
+    # numeric column: statistics pass through untouched (the LLM needs them)
+    assert safe["columns"]["col_2"]["min"] == profile["columns"]["col_2"]["min"]
+    assert safe["columns"]["col_2"]["max"] == profile["columns"]["col_2"]["max"]
+
+
+def test_profile_and_sample_masking_share_the_same_token():
+    df = pd.DataFrame({"col_1": ["Acme Distributors Ltd X"] * 3, "col_2": ["1", "2", "3"]})
+    profile = profile_table(df, "T")
+    pii = classify_pii_columns(df, profile)
+    safe_profile = pseudonymize_profile(profile, pii)
+    sample = build_stratified_sample(df, profile, flagged_rows={0}, max_rows=1)
+    masked_sample = pseudonymize_sample(sample, pii)
+    # same underlying value -> same token in both profile stats and sample
+    assert safe_profile["columns"]["col_1"]["min"] == masked_sample["sampled_rows"][0]["values"]["col_1"]
 
 
 def test_null_values_stay_null_after_masking():

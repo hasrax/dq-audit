@@ -103,6 +103,34 @@ def mask_value(value: str, salt: str = DEFAULT_SALT) -> str:
     return f"MASK_{digest}"
 
 
+def pseudonymize_profile(
+    profile: dict,
+    pii_columns: dict[str, bool],
+    salt: str = DEFAULT_SALT,
+) -> dict:
+    """Mask PII that leaks through a profile's column statistics.
+
+    A column's min/max and top_values are real cell values, so for a
+    masked (PII) column they must be pseudonymized before the profile
+    reaches a cloud model -- otherwise a company name still travels as
+    `min`/`max`/`top_values`. Numeric/date columns are never masked, so
+    their statistics (the ones the LLM actually reasons over) pass
+    through untouched. The same salt is used as pseudonymize_sample so a
+    masked stat and a masked sample cell share the same token.
+    """
+    new_columns = {}
+    for col, stats in profile["columns"].items():
+        if not pii_columns.get(col, False):
+            new_columns[col] = stats
+            continue
+        masked = dict(stats)
+        masked["min"] = mask_value(str(stats["min"]), salt) if stats["min"] is not None else None
+        masked["max"] = mask_value(str(stats["max"]), salt) if stats["max"] is not None else None
+        masked["top_values"] = {mask_value(k, salt): v for k, v in stats["top_values"].items()}
+        new_columns[col] = masked
+    return {**profile, "columns": new_columns}
+
+
 def pseudonymize_sample(
     sample: dict,
     pii_columns: dict[str, bool],

@@ -12,6 +12,7 @@ Run:
 """
 from __future__ import annotations
 
+import html
 import sys
 from pathlib import Path
 
@@ -23,10 +24,38 @@ import streamlit as st
 from app.db import repository
 
 DIMENSIONS = ["completeness", "validity", "consistency", "uniqueness", "timeliness", "cross_table", "accuracy"]
-SEVERITY_BADGE = {"high": "🔴 High", "medium": "🟠 Medium", "low": "🟡 Low"}
-SOURCE_BADGE = {"rule": "⚙️ Rule (Type 1)", "llm": "🤖 LLM (Type 2)"}
-STATUS_BADGE = {"flagged": "⚪ Flagged", "accepted": "✅ Accepted", "rejected": "❌ Rejected", "considered": "🤔 Considered"}
+STATUSES = ["flagged", "accepted", "rejected", "considered"]
+STATUS_LABEL = {"flagged": "⚪ Flagged", "accepted": "✅ Accepted", "rejected": "❌ Rejected", "considered": "🤔 Considered"}
+SEVERITY_COLOR = {"high": "#d92d20", "medium": "#dd6b20", "low": "#667085"}
+SOURCE_STYLE = {"rule": ("⚙️ RULE · Type 1", "#2563eb"), "llm": ("🤖 LLM · Type 2", "#7c3aed")}
 ALL = "(all)"
+
+CSS = """
+<style>
+.issue-card {
+  border: 1px solid rgba(128,128,128,0.25);
+  border-left: 6px solid var(--sev, #667085);
+  border-radius: 10px;
+  padding: 14px 18px 12px 18px;
+  margin: 2px 0 6px 0;
+  background: var(--tint, rgba(128,128,128,0.03));
+}
+.issue-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+.issue-title { font-size: 1.06rem; font-weight: 700; letter-spacing:0.2px; }
+.issue-desc { margin-top: 8px; font-size: 0.96rem; line-height: 1.45; }
+.issue-rec  { margin-top: 6px; font-size: 0.88rem; opacity: 0.75; font-style: italic; }
+.issue-meta { margin-top: 8px; font-size: 0.78rem; opacity: 0.65; }
+.pills { display:flex; gap:6px; flex-wrap:wrap; }
+.pill {
+  display:inline-block; padding: 2px 10px; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 700; color: #fff; white-space: nowrap;
+}
+.pill-outline {
+  background: transparent; color: var(--fg, inherit);
+  border: 1px solid rgba(128,128,128,0.45); font-weight: 600;
+}
+</style>
+"""
 
 
 @st.cache_resource
@@ -43,8 +72,17 @@ def _none_if_all(value: str) -> str | None:
     return None if value == ALL else value
 
 
+def _pill(text: str, color: str) -> str:
+    return f'<span class="pill" style="background:{color}">{html.escape(text)}</span>'
+
+
+def _outline_pill(text: str) -> str:
+    return f'<span class="pill pill-outline">{html.escape(text)}</span>'
+
+
 def main() -> None:
     st.set_page_config(page_title="DQ Audit — Triage", page_icon="🔍", layout="wide")
+    st.markdown(CSS, unsafe_allow_html=True)
     conn = get_conn()
 
     st.title("🔍 Data Quality Audit — Triage")
@@ -66,16 +104,21 @@ def main() -> None:
     f_source = _filter("Source", ["rule", "llm"])
     f_dimension = _filter("Dimension", DIMENSIONS)
     f_severity = _filter("Severity", ["high", "medium", "low"])
-    f_status = _filter("Status", ["flagged", "accepted", "rejected", "considered"], default="flagged")
+    f_status = _filter("Status", STATUSES, default="flagged")
 
     counts = repository.triage_counts(conn, uid)
+    total = upload["issue_count"]
+    reviewed = sum(counts.get(s, 0) for s in ("accepted", "rejected", "considered"))
+
+    _render_header(upload, counts, total, reviewed)
+
     st.sidebar.markdown("### Triage progress")
-    c1, c2 = st.sidebar.columns(2)
-    c1.metric("Accepted", counts.get("accepted", 0))
-    c2.metric("Rejected", counts.get("rejected", 0))
-    c3, c4 = st.sidebar.columns(2)
-    c3.metric("Considered", counts.get("considered", 0))
-    c4.metric("Pending", counts.get("flagged", 0))
+    s1, s2 = st.sidebar.columns(2)
+    s1.metric("✅ Accepted", counts.get("accepted", 0))
+    s2.metric("❌ Rejected", counts.get("rejected", 0))
+    s3, s4 = st.sidebar.columns(2)
+    s3.metric("🤔 Considered", counts.get("considered", 0))
+    s4.metric("⚪ Pending", counts.get("flagged", 0))
 
     issues = repository.fetch_issues(
         conn, uid,
@@ -84,51 +127,76 @@ def main() -> None:
         severity=_none_if_all(f_severity),
         status=_none_if_all(f_status),
     )
-
-    st.caption(
-        f"Upload #{uid} — {upload['source_client']} · "
-        f"{upload['issue_count']} issues total · showing {len(issues)}"
-    )
+    st.caption(f"Showing {len(issues)} issue(s)")
 
     for issue in issues:
         _render_issue_card(conn, issue)
 
 
+def _render_header(upload: dict, counts: dict, total: int, reviewed: int) -> None:
+    st.caption(f"Upload #{upload['id']} — **{upload['source_client']}** · {total} issues")
+    if total:
+        st.progress(reviewed / total, text=f"{reviewed} of {total} reviewed")
+
+
 def _render_issue_card(conn, issue: dict) -> None:
-    with st.container(border=True):
-        head = st.columns([3, 2, 2, 2])
-        location = issue["table_name"] + (f".{issue['column_name']}" if issue["column_name"] else "")
-        head[0].markdown(f"**{location}**")
-        head[1].markdown(SEVERITY_BADGE.get(issue["severity"], issue["severity"]))
-        head[2].markdown(SOURCE_BADGE.get(issue["source"], issue["source"]))
-        head[3].markdown(STATUS_BADGE.get(issue["status"], issue["status"]))
+    severity = issue["severity"]
+    sev_color = SEVERITY_COLOR.get(severity, "#667085")
+    src_label, src_color = SOURCE_STYLE.get(issue["source"], (issue["source"].upper(), "#667085"))
+    location = issue["table_name"] + (f".{issue['column_name']}" if issue["column_name"] else "")
 
-        st.markdown(f"**{issue['dimension']}** — {issue['description']}")
-        if issue.get("recommendation"):
-            st.markdown(f"💡 _{issue['recommendation']}_")
+    pills = _pill(severity.upper(), sev_color) + _pill(src_label, src_color) + _outline_pill(issue["dimension"])
+    if issue["status"] != "flagged":
+        pills += _outline_pill(STATUS_LABEL.get(issue["status"], issue["status"]))
 
-        ref = issue.get("row_reference") or {}
-        meta = []
-        if ref.get("count") is not None:
-            meta.append(f"Affected rows: **{ref['count']}**")
-        if ref.get("sample_rows"):
-            meta.append("e.g. " + ", ".join(str(r) for r in ref["sample_rows"][:5]))
-        if issue.get("fixable"):
-            meta.append(f"Fixable: **{issue['fixable']}**")
-        if meta:
-            st.caption(" · ".join(meta))
+    ref = issue.get("row_reference") or {}
+    meta_bits = []
+    if ref.get("count") is not None:
+        meta_bits.append(f"Affected rows: <b>{ref['count']}</b>")
+    if ref.get("sample_rows"):
+        meta_bits.append("e.g. rows " + ", ".join(str(r) for r in ref["sample_rows"][:5]))
+    if issue.get("fixable"):
+        meta_bits.append(f"Fixable: <b>{html.escape(issue['fixable'])}</b>")
 
-        note = st.text_input("Note (optional)", value=issue.get("user_note") or "", key=f"note_{issue['id']}")
-        b1, b2, b3, _ = st.columns([1, 1, 1, 4])
-        if b1.button("✅ Accept", key=f"acc_{issue['id']}", use_container_width=True):
-            repository.update_issue_status(conn, issue["id"], "accepted", note or None)
+    rec_html = f'<div class="issue-rec">💡 {html.escape(issue["recommendation"])}</div>' if issue.get("recommendation") else ""
+    tint = f"rgba({int(sev_color[1:3],16)},{int(sev_color[3:5],16)},{int(sev_color[5:7],16)},0.05)"
+
+    st.markdown(
+        f'''<div class="issue-card" style="--sev:{sev_color}; --tint:{tint}">
+  <div class="issue-head">
+    <span class="issue-title">{html.escape(location)}</span>
+    <span class="pills">{pills}</span>
+  </div>
+  <div class="issue-desc">{html.escape(issue["description"] or "")}</div>
+  {rec_html}
+  <div class="issue-meta">{" · ".join(meta_bits)}</div>
+</div>''',
+        unsafe_allow_html=True,
+    )
+
+    b1, b2, b3, spacer = st.columns([1, 1, 1, 5])
+    if b1.button("✅ Accept", key=f"acc_{issue['id']}", use_container_width=True):
+        _decide(conn, issue["id"], "accepted")
+    if b2.button("❌ Reject", key=f"rej_{issue['id']}", use_container_width=True):
+        _decide(conn, issue["id"], "rejected")
+    if b3.button("🤔 Consider", key=f"con_{issue['id']}", use_container_width=True):
+        _decide(conn, issue["id"], "considered")
+
+    with st.expander("📝 Add a note"):
+        note = st.text_area(
+            "Note", value=issue.get("user_note") or "", key=f"note_{issue['id']}",
+            label_visibility="collapsed", placeholder="Optional context for this decision…",
+        )
+        if st.button("Save note", key=f"savenote_{issue['id']}"):
+            repository.update_issue_status(conn, issue["id"], issue["status"], note or None)
             st.rerun()
-        if b2.button("❌ Reject", key=f"rej_{issue['id']}", use_container_width=True):
-            repository.update_issue_status(conn, issue["id"], "rejected", note or None)
-            st.rerun()
-        if b3.button("🤔 Consider", key=f"con_{issue['id']}", use_container_width=True):
-            repository.update_issue_status(conn, issue["id"], "considered", note or None)
-            st.rerun()
+
+
+def _decide(conn, issue_id: int, status: str) -> None:
+    # preserve any note already typed for this issue
+    note = st.session_state.get(f"note_{issue_id}") or None
+    repository.update_issue_status(conn, issue_id, status, note)
+    st.rerun()
 
 
 if __name__ == "__main__":

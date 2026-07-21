@@ -11,8 +11,11 @@ import json
 from pathlib import Path
 
 import psycopg
+from psycopg.rows import dict_row
 
 from app.config import Settings, load_settings
+
+VALID_STATUSES = ("flagged", "accepted", "rejected", "considered")
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
@@ -92,6 +95,71 @@ def save_issues(conn: psycopg.Connection, upload_id: int, issues: list[dict]) ->
         )
     conn.commit()
     return len(rows)
+
+
+def list_uploads(conn: psycopg.Connection) -> list[dict]:
+    """All audit runs, newest first, with a live triage-progress count."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute(
+            "SELECT u.id, u.filename, u.source_client, u.upload_date, u.row_count, "
+            "u.status, "
+            "count(i.id) AS issue_count, "
+            "count(i.id) FILTER (WHERE i.status = 'flagged') AS pending_count "
+            "FROM uploads u LEFT JOIN issues i ON i.upload_id = u.id "
+            "GROUP BY u.id ORDER BY u.id DESC"
+        ).fetchall()
+
+
+def fetch_issues(
+    conn: psycopg.Connection,
+    upload_id: int,
+    source: str | None = None,
+    dimension: str | None = None,
+    severity: str | None = None,
+    status: str | None = None,
+) -> list[dict]:
+    """Issues for an upload, optionally filtered; high severity first."""
+    clauses = ["upload_id = %s"]
+    params: list = [upload_id]
+    for column, value in (("source", source), ("dimension", dimension),
+                          ("severity", severity), ("status", status)):
+        if value is not None:
+            clauses.append(f"{column} = %s")
+            params.append(value)
+
+    sql = (
+        "SELECT * FROM issues WHERE " + " AND ".join(clauses) +
+        " ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id"
+    )
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute(sql, params).fetchall()
+
+
+def update_issue_status(
+    conn: psycopg.Connection,
+    issue_id: int,
+    status: str,
+    user_note: str | None = None,
+) -> None:
+    """Record a triage decision, stamping reviewed_at (throughput evidence)."""
+    if status not in VALID_STATUSES:
+        raise ValueError(f"invalid status: {status!r}")
+    conn.execute(
+        "UPDATE issues SET status = %s, user_note = %s, "
+        "reviewed_at = CASE WHEN %s = 'flagged' THEN NULL ELSE now() END "
+        "WHERE id = %s",
+        (status, user_note, status, issue_id),
+    )
+    conn.commit()
+
+
+def triage_counts(conn: psycopg.Connection, upload_id: int) -> dict[str, int]:
+    """Issue counts by triage status for one upload."""
+    rows = conn.execute(
+        "SELECT status, count(*) FROM issues WHERE upload_id = %s GROUP BY status",
+        (upload_id,),
+    ).fetchall()
+    return {status: count for status, count in rows}
 
 
 def _as_text(value) -> str | None:

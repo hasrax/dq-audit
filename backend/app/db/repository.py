@@ -14,6 +14,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from app.config import Settings, load_settings
+from app.scoring.score import compute_dq_score
 
 VALID_STATUSES = ("flagged", "accepted", "rejected", "considered")
 
@@ -160,6 +161,49 @@ def triage_counts(conn: psycopg.Connection, upload_id: int) -> dict[str, int]:
         (upload_id,),
     ).fetchall()
     return {status: count for status, count in rows}
+
+
+def save_dq_score(conn: psycopg.Connection, upload_id: int, score: dict) -> None:
+    """Store an upload's DQ score, replacing any previous snapshot.
+
+    Latest-wins: the score changes as triage rejects false positives, so
+    dq_scores always holds the current score per upload rather than a
+    history of stale snapshots.
+    """
+    conn.execute("DELETE FROM dq_scores WHERE upload_id = %s", (upload_id,))
+    conn.execute(
+        "INSERT INTO dq_scores (upload_id, overall_score, completeness_score, "
+        "validity_score, consistency_score, uniqueness_score, timeliness_score, "
+        "cross_table_score) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            upload_id, score["overall_score"], score["completeness_score"],
+            score["validity_score"], score["consistency_score"],
+            score["uniqueness_score"], score["timeliness_score"],
+            score["cross_table_score"],
+        ),
+    )
+    conn.commit()
+
+
+def score_upload(conn: psycopg.Connection, upload_id: int) -> dict:
+    """Recompute an upload's DQ score from its current issues and persist it."""
+    score = compute_dq_score(fetch_issues(conn, upload_id))
+    save_dq_score(conn, upload_id, score)
+    return score
+
+
+def fetch_score_trend(conn: psycopg.Connection, source_client: str) -> list[dict]:
+    """Stored DQ scores for a client's uploads over time (for the trend view)."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute(
+            "SELECT u.id AS upload_id, u.upload_date, u.source_client, "
+            "s.overall_score, s.completeness_score, s.validity_score, "
+            "s.consistency_score, s.uniqueness_score, s.timeliness_score, "
+            "s.cross_table_score "
+            "FROM uploads u JOIN dq_scores s ON s.upload_id = u.id "
+            "WHERE u.source_client = %s ORDER BY u.upload_date, u.id",
+            (source_client,),
+        ).fetchall()
 
 
 def _as_text(value) -> str | None:

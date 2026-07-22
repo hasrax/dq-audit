@@ -19,6 +19,7 @@ from pathlib import Path
 # Make the backend package importable without installing it.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
+import pandas as pd
 import streamlit as st
 
 from app.db import repository
@@ -54,8 +55,37 @@ CSS = """
   background: transparent; color: var(--fg, inherit);
   border: 1px solid rgba(128,128,128,0.45); font-weight: 600;
 }
+.hero { text-align:center; padding: 8px 0 6px 0; }
+.hero-num { font-size: 4.2rem; font-weight: 800; line-height: 1; }
+.hero-max { font-size: 1.4rem; font-weight: 600; opacity: 0.5; }
+.hero-label { font-size: 0.9rem; opacity: 0.7; letter-spacing: 0.4px; text-transform: uppercase; }
+.meter { margin: 10px 0; }
+.meter-top { display:flex; justify-content:space-between; font-size:0.9rem; margin-bottom:4px; }
+.meter-label { font-weight:600; }
+.meter-val { font-weight:800; }
+.meter-track { height:12px; border-radius:999px; background:rgba(128,128,128,0.18); overflow:hidden; }
+.meter-fill { height:100%; border-radius:999px; }
 </style>
 """
+
+SCORE_GOOD, SCORE_WARN = 80, 50
+TREND_HUE = "#3b82f6"
+DIMENSION_ROWS = [
+    ("Completeness", "completeness_score"),
+    ("Validity", "validity_score"),
+    ("Consistency", "consistency_score"),
+    ("Uniqueness", "uniqueness_score"),
+    ("Timeliness", "timeliness_score"),
+    ("Cross-table", "cross_table_score"),
+]
+
+
+def _status_color(value: float) -> str:
+    if value >= SCORE_GOOD:
+        return "#16a34a"
+    if value >= SCORE_WARN:
+        return "#d97706"
+    return "#dc2626"
 
 
 @st.cache_resource
@@ -120,17 +150,70 @@ def main() -> None:
     s3.metric("🤔 Considered", counts.get("considered", 0))
     s4.metric("⚪ Pending", counts.get("flagged", 0))
 
-    issues = repository.fetch_issues(
-        conn, uid,
-        source=_none_if_all(f_source),
-        dimension=_none_if_all(f_dimension),
-        severity=_none_if_all(f_severity),
-        status=_none_if_all(f_status),
-    )
-    st.caption(f"Showing {len(issues)} issue(s)")
+    tab_triage, tab_scores = st.tabs(["🧾 Triage", "📊 Scores & trend"])
 
-    for issue in issues:
-        _render_issue_card(conn, issue)
+    with tab_triage:
+        issues = repository.fetch_issues(
+            conn, uid,
+            source=_none_if_all(f_source),
+            dimension=_none_if_all(f_dimension),
+            severity=_none_if_all(f_severity),
+            status=_none_if_all(f_status),
+        )
+        st.caption(f"Showing {len(issues)} issue(s)")
+        for issue in issues:
+            _render_issue_card(conn, issue)
+
+    with tab_scores:
+        _render_scores(conn, upload)
+
+
+def _render_scores(conn, upload: dict) -> None:
+    # Recompute live so the score reflects current triage (rejected issues
+    # are excluded); this also refreshes the stored value for the trend.
+    score = repository.score_upload(conn, upload["id"])
+    overall = score["overall_score"]
+    color = _status_color(overall)
+
+    st.markdown(
+        f'<div class="hero"><div class="hero-num" style="color:{color}">'
+        f'{overall:.0f}<span class="hero-max">/100</span></div>'
+        f'<div class="hero-label">Overall Data Quality Score</div></div>',
+        unsafe_allow_html=True,
+    )
+    st.caption("Excludes issues rejected in triage. Recomputes as you review.")
+
+    st.markdown("#### By dimension — worst first")
+    meters = "".join(
+        _meter(label, score[key])
+        for label, key in sorted(DIMENSION_ROWS, key=lambda d: score[d[1]])
+    )
+    st.markdown(meters, unsafe_allow_html=True)
+
+    st.markdown("#### Trend across uploads")
+    trend = repository.fetch_score_trend(conn, upload["source_client"])
+    if len(trend) >= 2:
+        df = pd.DataFrame(
+            [{"upload": f"#{r['upload_id']}", "DQ score": float(r["overall_score"])} for r in trend]
+        ).set_index("upload")
+        st.line_chart(df, y="DQ score", color=TREND_HUE)
+    else:
+        st.caption(
+            f"Only one scored upload for **{upload['source_client']}** so far — "
+            "the trend line appears once another upload for this client is audited "
+            "(e.g. a later export, or re-auditing after fixes)."
+        )
+
+
+def _meter(label: str, value: float) -> str:
+    color = _status_color(value)
+    return (
+        f'<div class="meter"><div class="meter-top">'
+        f'<span class="meter-label">{html.escape(label)}</span>'
+        f'<span class="meter-val" style="color:{color}">{value:.0f}</span></div>'
+        f'<div class="meter-track"><div class="meter-fill" '
+        f'style="width:{max(0, min(100, value))}%; background:{color}"></div></div></div>'
+    )
 
 
 def _render_header(upload: dict, counts: dict, total: int, reviewed: int) -> None:

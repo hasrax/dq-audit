@@ -45,6 +45,7 @@ def persist_audit(
         n_profiles = repository.save_profiles(conn, upload_id, profiles)
         n_rels = repository.save_relationships(conn, upload_id, relationships)
         n_issues = repository.save_issues(conn, upload_id, all_issues)
+        score = repository.score_upload(conn, upload_id)
     finally:
         conn.close()
 
@@ -55,6 +56,7 @@ def persist_audit(
         "issues": n_issues,
         "rule_issues": len(result["issues"]),
         "llm_issues": len(llm_issues or []),
+        "overall_score": score["overall_score"],
     }
 
 
@@ -77,7 +79,8 @@ def main(argv: list[str] | None = None) -> None:
         f"upload #{result['upload_id']}: "
         f"{result['profiles']} profile rows, {result['relationships']} relationships, "
         f"{result['issues']} issues "
-        f"({result['rule_issues']} rule + {result['llm_issues']} llm)"
+        f"({result['rule_issues']} rule + {result['llm_issues']} llm) "
+        f"· DQ score {result['overall_score']}/100"
     )
 
 

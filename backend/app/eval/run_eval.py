@@ -116,7 +116,7 @@ def _report_markdown(report: dict) -> str:
         f"- Injection version: `{report['injection_version']}` · seed: `{report['seed']}` "
         f"· LLM: {report['with_llm']} · extract rows: {report['extract_rows']}",
         f"- Injected errors: **{report['n_injected']}** · detections: **{report['n_detections']}**",
-        f"- **Combined recall: {m['combined_recall']}** (target ≥ 0.90)",
+        f"- **Combined recall: {m['combined_recall']}** (target >= 0.90)",
         "",
         "## Per-source (precision / recall / F1)",
         "",

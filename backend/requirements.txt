@@ -5,3 +5,5 @@ python-dotenv
 psycopg[binary]
 streamlit
 openpyxl
+fastapi
+uvicorn

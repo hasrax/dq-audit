@@ -21,7 +21,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from app.io.loader import list_data_files, load_csv
+from app.io.loader import list_data_files, load_table
 from app.profiler.keys import choose_primary_key
 from app.profiler.profile import profile_table
 from app.profiler.relationships import find_relationships
@@ -49,7 +49,7 @@ def run_rules(directory, source_client=None, reference_date: datetime | None = N
     distinct_by_table: dict[str, dict[str, int]] = {}
 
     for path in list_data_files(directory):
-        df = load_csv(path)
+        df = load_table(path)
         types = infer_types(df)
         profile = profile_table(df, path.stem, types)
         tables[path.stem] = df

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import html
 import sys
+import tempfile
 from pathlib import Path
 
 # Make the backend package importable without installing it.
@@ -23,6 +24,8 @@ import pandas as pd
 import streamlit as st
 
 from app.db import repository
+from app.db.persist import persist_audit
+from app.llm.run_audit import audit_directory
 
 DIMENSIONS = ["completeness", "validity", "consistency", "uniqueness", "timeliness", "cross_table", "accuracy"]
 STATUSES = ["flagged", "accepted", "rejected", "considered"]
@@ -150,7 +153,10 @@ def main() -> None:
     s3.metric("🤔 Considered", counts.get("considered", 0))
     s4.metric("⚪ Pending", counts.get("flagged", 0))
 
-    tab_triage, tab_scores = st.tabs(["🧾 Triage", "📊 Scores & trend"])
+    tab_upload, tab_triage, tab_scores = st.tabs(["⬆️ New audit", "🧾 Triage", "📊 Scores & trend"])
+
+    with tab_upload:
+        _render_upload()
 
     with tab_triage:
         issues = repository.fetch_issues(
@@ -166,6 +172,48 @@ def main() -> None:
 
     with tab_scores:
         _render_scores(conn, upload)
+
+
+def _process_upload(files, client: str, run_llm: bool) -> dict:
+    """Write uploaded CSVs to a temp dir and run the full audit pipeline."""
+    tmp = Path(tempfile.mkdtemp(prefix="dq_upload_"))
+    for f in files:
+        (tmp / f.name).write_bytes(f.getvalue())
+
+    llm_issues = None
+    if run_llm:
+        audited = audit_directory(tmp)
+        llm_issues = [issue for table_issues in audited.values() for issue in table_issues]
+    return persist_audit(tmp, source_client=client, llm_issues=llm_issues)
+
+
+def _render_upload() -> None:
+    st.markdown("#### Upload a SeefaERP CSV export and run an audit")
+    st.caption(
+        "Files are headerless CSV exports. Upload related tables together "
+        "(e.g. a header + its detail table) so cross-table checks can run."
+    )
+    files = st.file_uploader("CSV file(s)", type=["csv"], accept_multiple_files=True)
+    client = st.text_input("Client / source name", placeholder="e.g. hemas_2026_q3")
+    run_llm = st.checkbox(
+        "Also run AI contextual analysis (LLM) — slower; sends pseudonymized samples to the cloud model",
+        value=False,
+    )
+
+    if st.button("▶️ Run audit", type="primary", disabled=not (files and client.strip())):
+        with st.spinner("Profiling, running rules" + (", AI analysis" if run_llm else "") + ", scoring…"):
+            try:
+                result = _process_upload(files, client.strip(), run_llm)
+            except Exception as exc:  # noqa: BLE001 -- surface any failure to the user
+                st.error(f"Audit failed: {exc}")
+                return
+        st.success(
+            f"Audit complete — upload #{result['upload_id']}: "
+            f"{result['issues']} issues "
+            f"({result['rule_issues']} rule + {result['llm_issues']} LLM) · "
+            f"DQ score {result['overall_score']}/100"
+        )
+        st.info("Open the **Triage** or **Scores** tab and select this upload from the sidebar.")
 
 
 def _render_scores(conn, upload: dict) -> None:

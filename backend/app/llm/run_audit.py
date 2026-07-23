@@ -20,7 +20,7 @@ import json
 import sys
 from pathlib import Path
 
-from app.io.loader import list_data_files, load_csv
+from app.io.loader import list_data_files, load_table
 from app.llm.auditor import audit_table
 from app.llm.client import LLMClient
 from app.privacy.pseudonymize import (
@@ -50,7 +50,7 @@ def audit_directory(
 
     loaded, types_by, profiles = {}, {}, {}
     for path in list_data_files(data_dir):
-        df = load_csv(path)
+        df = load_table(path)
         types = infer_types(df)
         loaded[path.stem] = df
         types_by[path.stem] = types

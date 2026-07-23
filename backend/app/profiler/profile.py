@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from app.io.loader import list_data_files, load_csv
+from app.io.loader import list_data_files, load_table
 from app.profiler.keys import choose_primary_key, find_pk_candidates
 from app.profiler.relationships import find_relationships
 from app.profiler.stats import compute_stats
@@ -39,7 +39,7 @@ def profile_directory(directory: Path | str) -> tuple[dict[str, dict], list[dict
     profiles: dict[str, dict] = {}
 
     for path in list_data_files(directory):
-        df = load_csv(path)
+        df = load_table(path)
         types = infer_types(df)
         tables[path.stem] = df
         types_by_table[path.stem] = types

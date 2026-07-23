@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from app.eval.run_eval import build_scenario, run
+from app.eval.run_eval import build_scenario, run, run_multiseed
 
 HEMAS_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
 
@@ -43,3 +43,11 @@ def test_every_type1_dimension_is_detected_by_rules():
     rbd = report["metrics"]["recall_by_dimension"]
     for dim in ("completeness", "consistency", "cross_table", "timeliness", "uniqueness"):
         assert rbd[dim] == 1.0, f"{dim} not fully detected: {rbd[dim]}"
+
+
+def test_multiseed_type1_recall_is_stable_and_high():
+    report = run_multiseed(HEMAS_DIR, seeds=(11, 22, 33), with_llm=False)
+    agg = report["aggregate"]["type1_recall"]
+    assert agg["n"] == 3
+    assert agg["mean"] >= 0.90          # consistently meets the target
+    assert agg["std"] <= 0.10           # and is stable across seeds

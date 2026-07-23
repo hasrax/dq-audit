@@ -17,6 +17,7 @@ import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from statistics import mean, pstdev
 
 import numpy as np
 
@@ -108,6 +109,50 @@ def run(hemas_dir: Path = HEMAS_DIR, with_llm: bool = True, seed: int = DEFAULT_
     }
 
 
+DEFAULT_SEEDS = (20260722, 101, 202, 303, 404)
+
+
+def _aggregate(values: list) -> dict:
+    vals = [v for v in values if v is not None]
+    if not vals:
+        return {"mean": None, "std": None, "min": None, "max": None, "n": 0}
+    return {
+        "mean": round(mean(vals), 4),
+        "std": round(pstdev(vals), 4),
+        "min": round(min(vals), 4),
+        "max": round(max(vals), 4),
+        "n": len(vals),
+    }
+
+
+def run_multiseed(hemas_dir: Path = HEMAS_DIR, seeds=DEFAULT_SEEDS, with_llm: bool = False) -> dict:
+    """Run the injection eval across seeds and aggregate the key metrics.
+
+    Defaults to rules-only (deterministic, free) so robustness reflects the
+    detectors, not LLM sampling noise; pass with_llm=True to include the
+    combined figure at token cost.
+    """
+    runs = [run(hemas_dir, with_llm=with_llm, seed=s)["metrics"] for s in seeds]
+    dims = sorted(runs[0]["recall_by_dimension"].keys())
+    return {
+        "seeds": list(seeds),
+        "with_llm": with_llm,
+        "aggregate": {
+            "combined_recall": _aggregate([m["combined_recall"] for m in runs]),
+            "type1_recall": _aggregate([m["recall_by_type"]["type1"] for m in runs]),
+            "rule_precision": _aggregate([m["by_source"]["rule"]["precision"] for m in runs]),
+            "recall_by_dimension": {
+                d: _aggregate([m["recall_by_dimension"].get(d) for m in runs]) for d in dims
+            },
+        },
+        "per_seed": [
+            {"seed": s, "combined_recall": m["combined_recall"], "type1_recall": m["recall_by_type"]["type1"]}
+            for s, m in zip(seeds, runs)
+        ],
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
 def _report_markdown(report: dict) -> str:
     m = report["metrics"]
     lines = [
@@ -146,6 +191,20 @@ def main(argv: list[str] | None = None) -> None:
     for a in argv:
         if a.startswith("--seed"):
             seed = int(a.split("=")[1]) if "=" in a else DEFAULT_SEED
+
+    if "--multiseed" in argv:
+        report = run_multiseed(with_llm=with_llm)
+        out_dir = Path("output") / "eval"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "robustness.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        agg = report["aggregate"]
+        print(f"Multi-seed robustness over {len(report['seeds'])} seeds (LLM={report['with_llm']}):")
+        print(f"  Type 1 recall: mean {agg['type1_recall']['mean']} +/- {agg['type1_recall']['std']} "
+              f"(min {agg['type1_recall']['min']}, max {agg['type1_recall']['max']})")
+        print(f"  Combined recall: mean {agg['combined_recall']['mean']} +/- {agg['combined_recall']['std']}")
+        print(f"  Rule precision: mean {agg['rule_precision']['mean']} +/- {agg['rule_precision']['std']}")
+        print(f"wrote {out_dir}/robustness.json")
+        return
 
     report = run(with_llm=with_llm, seed=seed)
 

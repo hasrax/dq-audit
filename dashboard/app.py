@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 import pandas as pd
 import streamlit as st
 
+from app.aliases import display_columns, load_aliases
 from app.db import repository
 from app.db.persist import persist_audit
 from app.llm.run_audit import audit_directory
@@ -167,8 +168,9 @@ def main() -> None:
             status=_none_if_all(f_status),
         )
         st.caption(f"Showing {len(issues)} issue(s)")
+        aliases = load_aliases(upload["source_client"])
         for issue in issues:
-            _render_issue_card(conn, issue)
+            _render_issue_card(conn, issue, aliases)
 
     with tab_scores:
         _render_scores(conn, upload)
@@ -270,11 +272,12 @@ def _render_header(upload: dict, counts: dict, total: int, reviewed: int) -> Non
         st.progress(reviewed / total, text=f"{reviewed} of {total} reviewed")
 
 
-def _render_issue_card(conn, issue: dict) -> None:
+def _render_issue_card(conn, issue: dict, aliases: dict | None = None) -> None:
     severity = issue["severity"]
     sev_color = SEVERITY_COLOR.get(severity, "#667085")
     src_label, src_color = SOURCE_STYLE.get(issue["source"], (issue["source"].upper(), "#667085"))
-    location = issue["table_name"] + (f".{issue['column_name']}" if issue["column_name"] else "")
+    col_display = display_columns(aliases or {}, issue["table_name"], issue["column_name"])
+    location = issue["table_name"] + (f".{col_display}" if col_display else "")
 
     pills = _pill(severity.upper(), sev_color) + _pill(src_label, src_color) + _outline_pill(issue["dimension"])
     if issue["status"] != "flagged":

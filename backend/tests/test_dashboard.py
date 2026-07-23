@@ -45,3 +45,13 @@ def test_scores_tab_renders_overall_score():
     markdown_blob = " ".join(m.value for m in at.markdown)
     assert "Overall Data Quality Score" in markdown_blob
     assert "By dimension" in markdown_blob
+
+
+def test_selecting_an_upload_with_aliases_does_not_break():
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file(str(APP_PATH), default_timeout=60).run()
+    sel = at.sidebar.selectbox[0]
+    if sel.options:
+        sel.select(sel.options[-1]).run()  # oldest upload (aliased client if present)
+    assert not at.exception

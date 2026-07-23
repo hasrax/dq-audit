@@ -1,0 +1,17 @@
+{
+  "_comment": "Display-only column aliases for the headerless Hemas SeefaERP export. EDIT freely to match the real schema; unmapped columns fall back to col_N. High-confidence mappings only.",
+  "GRNHED": {
+    "col_1": "GRN Number",
+    "col_3": "Bill Date",
+    "col_4": "Due Date",
+    "col_5": "Invoice No",
+    "col_7": "Bill Amount",
+    "col_11": "Entry Date",
+    "col_12": "Entry Time",
+    "col_13": "Total Discount",
+    "col_16": "System Date"
+  },
+  "GRNDtl": {
+    "col_1": "GRN Number"
+  }
+}

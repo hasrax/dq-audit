@@ -26,6 +26,7 @@ import streamlit as st
 from app.aliases import display_columns, load_aliases
 from app.db import repository
 from app.db.persist import persist_audit
+from app.eval.triage_metrics import compute_triage_metrics
 from app.llm.run_audit import audit_directory
 
 DIMENSIONS = ["completeness", "validity", "consistency", "uniqueness", "timeliness", "cross_table", "accuracy"]
@@ -253,6 +254,30 @@ def _render_scores(conn, upload: dict) -> None:
             "the trend line appears once another upload for this client is audited "
             "(e.g. a later export, or re-auditing after fixes)."
         )
+
+    _render_triage_metrics(conn, upload)
+
+
+def _pct_or_dash(value) -> str:
+    return "—" if value is None else f"{value * 100:.0f}%"
+
+
+def _render_triage_metrics(conn, upload: dict) -> None:
+    st.markdown("#### Triage-derived metrics (E3)")
+    tm = compute_triage_metrics(repository.fetch_issues(conn, upload["id"]))
+    if tm["reviewed"] == 0:
+        st.caption("No issues triaged yet — accept/reject/consider issues in the Triage tab to populate these.")
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Empirical precision", _pct_or_dash(tm["empirical_precision"]))
+    c2.metric("Rule precision", _pct_or_dash(tm["by_source"]["rule"]["empirical_precision"]))
+    c3.metric("LLM hallucination", _pct_or_dash(tm["hallucination_rate"]))
+    c4.metric("Ambiguity", _pct_or_dash(tm["ambiguity_rate"]))
+    st.caption(
+        f"{tm['reviewed']} of {tm['total']} issues reviewed. "
+        "Precision counts only accept-vs-reject decisions (target ≥ 80%)."
+    )
 
 
 def _meter(label: str, value: float) -> str:

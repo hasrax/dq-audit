@@ -35,6 +35,15 @@ def make_non_null(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return df
 
 
+def make_all_non_null(df: pd.DataFrame, fill: str = "0") -> pd.DataFrame:
+    """Fill every column's nulls so the baseline starts clean of pre-existing
+    completeness issues; fully-null columns get a constant filler."""
+    for col in df.columns:
+        non_null = df[col].dropna()
+        df[col] = df[col].fillna(non_null.iloc[0] if not non_null.empty else fill)
+    return df
+
+
 def make_non_negative(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     for col in columns:
         numeric = pd.to_numeric(df[col], errors="coerce")

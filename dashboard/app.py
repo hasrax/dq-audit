@@ -27,6 +27,7 @@ from app.aliases import display_columns, load_aliases
 from app.db import repository
 from app.db.persist import persist_audit
 from app.eval.triage_metrics import compute_triage_metrics
+from app.export import issues_to_csv, score_to_csv
 from app.llm.run_audit import audit_directory
 
 DIMENSIONS = ["completeness", "validity", "consistency", "uniqueness", "timeliness", "cross_table", "accuracy"]
@@ -168,8 +169,18 @@ def main() -> None:
             severity=_none_if_all(f_severity),
             status=_none_if_all(f_status),
         )
-        st.caption(f"Showing {len(issues)} issue(s)")
         aliases = load_aliases(upload["source_client"])
+        head_l, head_r = st.columns([3, 1])
+        head_l.caption(f"Showing {len(issues)} issue(s)")
+        if issues:
+            head_r.download_button(
+                "⬇️ Export CSV",
+                data=issues_to_csv(issues, aliases),
+                file_name=f"issues_upload_{uid}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                help="Downloads the currently filtered issues (with triage status).",
+            )
         for issue in issues:
             _render_issue_card(conn, issue, aliases)
 
@@ -233,6 +244,13 @@ def _render_scores(conn, upload: dict) -> None:
         unsafe_allow_html=True,
     )
     st.caption("Excludes issues rejected in triage. Recomputes as you review.")
+
+    st.download_button(
+        "⬇️ Export score summary (CSV)",
+        data=score_to_csv(score),
+        file_name=f"dq_score_upload_{upload['id']}.csv",
+        mime="text/csv",
+    )
 
     st.markdown("#### By dimension — worst first")
     meters = "".join(

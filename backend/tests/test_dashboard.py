@@ -21,7 +21,8 @@ def test_app_boots_without_exception():
 
     at = AppTest.from_file(str(APP_PATH), default_timeout=60).run()
     assert not at.exception
-    assert any("Data Quality Audit" in t.value for t in at.title)
+    # branded header (temporary working name) is rendered via markdown
+    assert any("ClarityDQ" in m.value for m in at.markdown)
 
 
 def test_app_renders_triage_controls_when_issues_exist():

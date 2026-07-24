@@ -15,6 +15,7 @@ from __future__ import annotations
 import html
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
 
 # Make the backend package importable without installing it.
@@ -29,6 +30,11 @@ from app.db.persist import persist_audit
 from app.eval.triage_metrics import compute_triage_metrics
 from app.export import issues_to_csv, score_to_csv
 from app.llm.run_audit import audit_directory
+from app.scoring.score import DEFAULT_K, DIMENSION_ALIASES, SEVERITY_POINTS
+
+# Temporary working name — change these two lines to rebrand the whole app.
+APP_NAME = "ClarityDQ"
+APP_TAGLINE = "Explainable Data Quality Audit for SeefaERP"
 
 DIMENSIONS = ["completeness", "validity", "consistency", "uniqueness", "timeliness", "cross_table", "accuracy"]
 STATUSES = ["flagged", "accepted", "rejected", "considered"]
@@ -71,6 +77,14 @@ CSS = """
 .meter-val { font-weight:800; }
 .meter-track { height:12px; border-radius:999px; background:rgba(128,128,128,0.18); overflow:hidden; }
 .meter-fill { height:100%; border-radius:999px; }
+.topbar {
+  display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+  padding:2px 0 12px 0; margin-bottom:14px;
+  border-bottom:2px solid rgba(37,99,235,0.35);
+}
+.topbar .brand { font-size:1.7rem; font-weight:800; letter-spacing:0.3px; }
+.topbar .brand .mark { color:#2563eb; }
+.topbar .tagline { font-size:0.9rem; opacity:0.6; }
 </style>
 """
 
@@ -117,11 +131,15 @@ def _outline_pill(text: str) -> str:
 
 
 def main() -> None:
-    st.set_page_config(page_title="DQ Audit — Triage", page_icon="🔍", layout="wide")
+    st.set_page_config(page_title=APP_NAME, page_icon="🔍", layout="wide")
     st.markdown(CSS, unsafe_allow_html=True)
     conn = get_conn()
 
-    st.title("🔍 Data Quality Audit — Triage")
+    st.markdown(
+        f'<div class="topbar"><span class="brand">🔍 <span class="mark">{APP_NAME}</span></span>'
+        f'<span class="tagline">{APP_TAGLINE}</span></div>',
+        unsafe_allow_html=True,
+    )
 
     uploads = repository.list_uploads(conn)
     if not uploads:
@@ -178,7 +196,7 @@ def main() -> None:
                 data=issues_to_csv(issues, aliases),
                 file_name=f"issues_upload_{uid}.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
                 help="Downloads the currently filtered issues (with triage status).",
             )
         for issue in issues:
@@ -252,12 +270,7 @@ def _render_scores(conn, upload: dict) -> None:
         mime="text/csv",
     )
 
-    st.markdown("#### By dimension — worst first")
-    meters = "".join(
-        _meter(label, score[key])
-        for label, key in sorted(DIMENSION_ROWS, key=lambda d: score[d[1]])
-    )
-    st.markdown(meters, unsafe_allow_html=True)
+    _render_dimension_breakdown(conn, upload, score)
 
     st.markdown("#### Trend across uploads")
     trend = repository.fetch_score_trend(conn, upload["source_client"])
@@ -296,6 +309,55 @@ def _render_triage_metrics(conn, upload: dict) -> None:
         f"{tm['reviewed']} of {tm['total']} issues reviewed. "
         "Precision counts only accept-vs-reject decisions (target ≥ 80%)."
     )
+
+
+def _render_dimension_breakdown(conn, upload: dict, score: dict) -> None:
+    st.markdown("#### By dimension — click to see what drives each score")
+    aliases = load_aliases(upload["source_client"])
+    # Only non-rejected issues count toward the score, so only they are shown.
+    scored_issues = [i for i in repository.fetch_issues(conn, upload["id"]) if i.get("status") != "rejected"]
+
+    by_dim: dict[str, list] = {}
+    for issue in scored_issues:
+        dim = DIMENSION_ALIASES.get(issue["dimension"], issue["dimension"])
+        by_dim.setdefault(dim, []).append(issue)
+
+    for label, key in sorted(DIMENSION_ROWS, key=lambda d: score[d[1]]):
+        dim = key.removesuffix("_score")
+        sub = score[key]
+        dim_issues = by_dim.get(dim, [])
+        badge = "🟢" if sub >= SCORE_GOOD else ("🟠" if sub >= SCORE_WARN else "🔴")
+
+        with st.expander(f"{badge}  {label} — {sub:.0f}/100  ·  {len(dim_issues)} issue(s)"):
+            st.markdown(_meter(label, sub), unsafe_allow_html=True)
+            sev = Counter(i["severity"] for i in dim_issues)
+            penalty = sum(SEVERITY_POINTS.get(i["severity"], 1) for i in dim_issues)
+            st.caption(
+                f"🔴 {sev.get('high', 0)} high · 🟠 {sev.get('medium', 0)} medium · "
+                f"⚪ {sev.get('low', 0)} low  →  penalty {penalty} pts  →  "
+                f"score = 100 × {DEFAULT_K:g}/({DEFAULT_K:g}+{penalty}) = {sub:.0f}"
+            )
+            if dim_issues:
+                st.dataframe(
+                    [
+                        {
+                            "Location": i["table_name"] + (
+                                "." + display_columns(aliases, i["table_name"], i["column_name"])
+                                if i["column_name"] else ""
+                            ),
+                            "Severity": i["severity"],
+                            "Source": i["source"],
+                            "Fixable": i.get("fixable") or "",
+                            "Status": i.get("status"),
+                            "What was found": (i.get("description") or "")[:200],
+                        }
+                        for i in sorted(dim_issues, key=lambda x: {"high": 0, "medium": 1, "low": 2}.get(x["severity"], 3))
+                    ],
+                    width="stretch",
+                    hide_index=True,
+                )
+            else:
+                st.caption("No issues in this dimension — it scores a perfect 100.")
 
 
 def _meter(label: str, value: float) -> str:
@@ -352,11 +414,11 @@ def _render_issue_card(conn, issue: dict, aliases: dict | None = None) -> None:
     )
 
     b1, b2, b3, spacer = st.columns([1, 1, 1, 5])
-    if b1.button("✅ Accept", key=f"acc_{issue['id']}", use_container_width=True):
+    if b1.button("✅ Accept", key=f"acc_{issue['id']}", width="stretch"):
         _decide(conn, issue["id"], "accepted")
-    if b2.button("❌ Reject", key=f"rej_{issue['id']}", use_container_width=True):
+    if b2.button("❌ Reject", key=f"rej_{issue['id']}", width="stretch"):
         _decide(conn, issue["id"], "rejected")
-    if b3.button("🤔 Consider", key=f"con_{issue['id']}", use_container_width=True):
+    if b3.button("🤔 Consider", key=f"con_{issue['id']}", width="stretch"):
         _decide(conn, issue["id"], "considered")
 
     with st.expander("📝 Add a note"):

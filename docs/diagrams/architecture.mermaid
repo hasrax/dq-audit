@@ -1,0 +1,57 @@
+---
+config:
+  theme: neutral
+---
+graph TB
+    CSV["📄 CSV / Excel Export from SeefaERP<br/>(read-only — no DB access needed)"]
+
+    subgraph L0["LAYER 0 — Ingestion & Profiling"]
+        P1["Type Inference<br/>int · money · date · varchar"]
+        P2["Column Statistics<br/>nulls · distinct · min/max · mean"]
+        P3["PK / FK Discovery<br/>value-overlap scoring, ~20 rels/client"]
+        P4["Stratified Row Sampling<br/>flagged + random + edge cases"]
+    end
+
+    PROFILE["Profile JSON (~3–5K tokens)<br/>+ Sample Rows + Relationship Map"]
+
+    subgraph L1["LAYER 1 — Rules Engine · Type 1 errors · ALL rows"]
+        R1["Completeness<br/>null_pct > 5%"]
+        R2["Validity<br/>negative amounts/qty"]
+        R3["Consistency<br/>BillDate > DueDate · Total ≠ Qty×Price"]
+        R4["Uniqueness<br/>duplicate PKs / rows"]
+        R5["Timeliness<br/>future > 30d · stale > 2y"]
+        R6["Cross-Table<br/>FK orphans (invisible to single-file tools)"]
+    end
+
+    subgraph L2["LAYER 2 — LLM Auditor · Type 2 errors · SELECTIVE"]
+        LLM["Ollama local — Llama 3.1 8B / Qwen 2.5 7B<br/>(AWS Bedrock: optional final validation only)<br/>• Detects contextual anomalies rules can't express<br/>• Explains ALL issues in plain language<br/>• Classifies fixable vs non-fixable<br/>• Suggests corrective actions<br/>Sees profile + samples ONLY — never full tables"]
+    end
+
+    ISSUES["Combined Issue List<br/>ontology tuple: (dimension, source,<br/>error type, severity, fixability, status)"]
+
+    subgraph L3["LAYER 3 — Human Triage"]
+        F["🚩 Flagged<br/>(pending)"]
+        A["✅ Accepted<br/>→ positive label"]
+        RJ["❌ Rejected<br/>→ false positive /<br/>LLM hallucination measure"]
+        C["🤔 Considered<br/>→ ambiguous case"]
+    end
+
+    subgraph L4["LAYER 4 — Monitoring & Scoring"]
+        REPO[("Issue Repository<br/>PostgreSQL")]
+        SCORE["Severity-Weighted DQ Score<br/>per dimension, per upload"]
+        DASH["Streamlit Dashboard<br/>issue list · scores · trend over time"]
+    end
+
+    CSV --> L0
+    P1 & P2 & P3 & P4 --> PROFILE
+    PROFILE --> L1
+    PROFILE --> LLM
+    R1 & R2 & R3 & R4 & R5 & R6 -->|"Type 1 detections"| ISSUES
+    LLM -->|"Type 2 detections"| ISSUES
+    ISSUES -->|"explanations + recommendations<br/>attached to every issue"| LLM
+    ISSUES --> F
+    F --> A & RJ & C
+    A & RJ & C --> REPO
+    REPO --> SCORE --> DASH
+    DASH -.->|"next upload / review again"| CSV
+    A & RJ -.->|"ground-truth labels<br/>(evaluation-in-use)"| REPO

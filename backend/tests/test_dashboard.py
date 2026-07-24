@@ -48,6 +48,15 @@ def test_scores_tab_renders_overall_score():
     assert "By dimension" in markdown_blob
 
 
+def test_overview_tab_renders_kpis():
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file(str(APP_PATH), default_timeout=60).run()
+    assert not at.exception
+    assert any("Total issues" in m.label for m in at.metric)
+    assert any("DATA QUALITY SCORE" in m.value for m in at.markdown)
+
+
 def test_selecting_an_upload_with_aliases_does_not_break():
     from streamlit.testing.v1 import AppTest
 

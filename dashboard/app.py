@@ -174,7 +174,12 @@ def main() -> None:
     s3.metric("🤔 Considered", counts.get("considered", 0))
     s4.metric("⚪ Pending", counts.get("flagged", 0))
 
-    tab_upload, tab_triage, tab_scores = st.tabs(["⬆️ New audit", "🧾 Triage", "📊 Scores & trend"])
+    tab_overview, tab_upload, tab_triage, tab_scores = st.tabs(
+        ["📋 Overview", "⬆️ New audit", "🧾 Triage", "📊 Scores & trend"]
+    )
+
+    with tab_overview:
+        _render_overview(conn, upload)
 
     with tab_upload:
         _render_upload()
@@ -204,6 +209,62 @@ def main() -> None:
 
     with tab_scores:
         _render_scores(conn, upload)
+
+
+def _render_overview(conn, upload: dict) -> None:
+    uid = upload["id"]
+    issues = repository.fetch_issues(conn, uid)
+    score = repository.score_upload(conn, uid)
+    tm = compute_triage_metrics(issues)
+    total = len(issues)
+    overall = score["overall_score"]
+    color = _status_color(overall)
+
+    st.caption(f"Upload #{uid} — **{upload['source_client']}** · {upload['row_count']:,} rows audited")
+
+    top = st.columns([1.5, 1, 1, 1])
+    top[0].markdown(
+        f'<div style="font-size:2.8rem;font-weight:800;color:{color};line-height:1">'
+        f'{overall:.0f}<span style="font-size:1rem;opacity:0.5">/100</span></div>'
+        f'<div style="opacity:0.6;font-size:0.78rem;letter-spacing:0.4px">DATA QUALITY SCORE</div>',
+        unsafe_allow_html=True,
+    )
+    top[1].metric("Total issues", f"{total:,}")
+    top[2].metric("Pending triage", tm["by_status"]["flagged"])
+    top[3].metric("Reviewed", tm["reviewed"])
+
+    if total:
+        st.progress(tm["reviewed"] / total, text=f"{tm['reviewed']} of {total} issues reviewed")
+
+    sev = Counter(i["severity"] for i in issues)
+    src = Counter(i["source"] for i in issues)
+    row = st.columns(4)
+    row[0].metric("🔴 High", sev.get("high", 0))
+    row[1].metric("🟠 Medium", sev.get("medium", 0))
+    row[2].metric("⚪ Low", sev.get("low", 0))
+    row[3].metric("⚙️ Rule / 🤖 LLM", f"{src.get('rule', 0)} / {src.get('llm', 0)}")
+
+    if not total:
+        st.info("No issues recorded for this upload.")
+        return
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("##### Issues by dimension")
+        by_dim = Counter(DIMENSION_ALIASES.get(i["dimension"], i["dimension"]) for i in issues)
+        dim_df = (
+            pd.DataFrame({"dimension": list(by_dim), "issues": list(by_dim.values())})
+            .set_index("dimension").sort_values("issues", ascending=True)
+        )
+        st.bar_chart(dim_df, color=TREND_HUE, horizontal=True)
+    with right:
+        st.markdown("##### Most affected tables")
+        by_tbl = Counter(i["table_name"] for i in issues)
+        tbl_df = (
+            pd.DataFrame({"table": list(by_tbl), "issues": list(by_tbl.values())})
+            .set_index("table").sort_values("issues", ascending=True).tail(8)
+        )
+        st.bar_chart(tbl_df, color=TREND_HUE, horizontal=True)
 
 
 def _process_upload(files, client: str, run_llm: bool) -> dict:

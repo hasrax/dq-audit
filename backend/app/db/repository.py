@@ -209,6 +209,26 @@ def score_upload(conn: psycopg.Connection, upload_id: int) -> dict:
     return score
 
 
+def fetch_relationships(conn: psycopg.Connection, upload_id: int) -> list[dict]:
+    """Discovered cross-table relationships for an upload, strongest first."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute(
+            "SELECT id, child_table, child_column, parent_table, parent_column, "
+            "overlap_pct, confirmed FROM relationships WHERE upload_id = %s "
+            "ORDER BY overlap_pct DESC, id",
+            (upload_id,),
+        ).fetchall()
+
+
+def set_relationship_confirmed(conn: psycopg.Connection, relationship_id: int, confirmed: bool) -> None:
+    """Record a human's confirm/unconfirm decision on a discovered FK."""
+    conn.execute(
+        "UPDATE relationships SET confirmed = %s WHERE id = %s",
+        (confirmed, relationship_id),
+    )
+    conn.commit()
+
+
 def fetch_score_trend(conn: psycopg.Connection, source_client: str) -> list[dict]:
     """Stored DQ scores for a client's uploads over time (for the trend view)."""
     with conn.cursor(row_factory=dict_row) as cur:

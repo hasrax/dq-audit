@@ -7,3 +7,4 @@ streamlit
 openpyxl
 fastapi
 uvicorn
+matplotlib

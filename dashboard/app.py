@@ -27,7 +27,10 @@ import streamlit as st
 from app.aliases import display_columns, load_aliases
 from app.db import repository
 from app.db.persist import persist_audit
+import json
+
 from app.eval.complementarity import real_complementarity
+from app.eval.figures import figure_png_bytes
 from app.eval.triage_metrics import compute_triage_metrics
 from app.export import issues_to_csv, score_to_csv
 from app.llm.run_audit import audit_directory
@@ -202,8 +205,8 @@ def main() -> None:
     with st.sidebar.expander(f"ℹ️ About {APP_NAME}"):
         st.markdown(ABOUT_MD)
 
-    tab_overview, tab_upload, tab_triage, tab_scores = st.tabs(
-        ["📋 Overview", "⬆️ New audit", "🧾 Triage", "📊 Scores & trend"]
+    tab_overview, tab_upload, tab_triage, tab_rel, tab_scores = st.tabs(
+        ["📋 Overview", "⬆️ New audit", "🧾 Triage", "🔗 Relationships", "📊 Scores & trend"]
     )
 
     with tab_overview:
@@ -238,8 +241,44 @@ def main() -> None:
         for issue in issues:
             _render_issue_card(conn, issue, aliases)
 
+    with tab_rel:
+        _render_relationships(conn, upload)
+
     with tab_scores:
         _render_scores(conn, upload)
+
+
+def _render_relationships(conn, upload: dict) -> None:
+    st.markdown("#### Discovered cross-table relationships")
+    st.caption(
+        "Foreign keys inferred from value overlap. Confirm the real ones and "
+        "unconfirm spurious candidates — higher overlap % is stronger evidence. "
+        "Detection stays automatic; this just records your review."
+    )
+    rels = repository.fetch_relationships(conn, upload["id"])
+    if not rels:
+        st.info("No cross-table relationships were discovered for this upload.")
+        return
+
+    aliases = load_aliases(upload["source_client"])
+    confirmed_n = sum(1 for r in rels if r["confirmed"])
+    st.caption(f"**{confirmed_n} of {len(rels)}** confirmed.")
+
+    for r in rels:
+        child = f"{r['child_table']}.{display_columns(aliases, r['child_table'], r['child_column']) or r['child_column']}"
+        parent = f"{r['parent_table']}.{display_columns(aliases, r['parent_table'], r['parent_column']) or r['parent_column']}"
+        strength = "🟢" if r["overlap_pct"] >= 99 else ("🟠" if r["overlap_pct"] >= 90 else "🔴")
+        status = "✅ Confirmed" if r["confirmed"] else "⚪ Unconfirmed"
+        with st.container(border=True):
+            left, right = st.columns([5, 1.4])
+            left.markdown(
+                f"{strength} **{html.escape(child)}** → **{html.escape(parent)}**  \n"
+                f"{r['overlap_pct']}% value overlap · {status}"
+            )
+            label = "↩️ Unconfirm" if r["confirmed"] else "✅ Confirm"
+            if right.button(label, key=f"rel_{r['id']}", width="stretch"):
+                repository.set_relationship_confirmed(conn, r["id"], not r["confirmed"])
+                st.rerun()
 
 
 def _render_overview(conn, upload: dict) -> None:
@@ -408,6 +447,19 @@ def _render_complementarity(conn, upload: dict) -> None:
             ]
         ).set_index("dimension")
         st.bar_chart(df, color=["#2563eb", "#7c3aed", "#14b8a6"], horizontal=True, stack=True)
+
+        st.download_button(
+            "⬇️ Download figure (PNG, for the dissertation)",
+            data=_e2_figure_png(json.dumps(by_dim, sort_keys=True),
+                                f"Rule–LLM complementarity — {upload['source_client']}"),
+            file_name=f"complementarity_{upload['source_client']}.png",
+            mime="image/png",
+        )
+
+
+@st.cache_data(show_spinner=False)
+def _e2_figure_png(by_dim_json: str, title: str) -> bytes:
+    return figure_png_bytes(json.loads(by_dim_json), title)
 
 
 def _pct_or_dash(value) -> str:

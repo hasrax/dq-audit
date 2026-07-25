@@ -83,3 +83,26 @@ def test_invalid_status_is_rejected(seeded):
     target = repository.fetch_issues(conn, uid)[0]
     with pytest.raises(ValueError):
         repository.update_issue_status(conn, target["id"], "maybe")
+
+
+def test_bulk_set_statuses(seeded):
+    conn, uid = seeded
+    ids = [i["id"] for i in repository.fetch_issues(conn, uid)]
+    n = repository.set_issue_statuses(conn, ids, "accepted")
+    assert n == len(ids)
+    assert repository.triage_counts(conn, uid).get("accepted") == len(ids)
+
+    # bulk reset back to flagged clears reviewed_at
+    repository.set_issue_statuses(conn, ids, "flagged")
+    assert all(i["reviewed_at"] is None for i in repository.fetch_issues(conn, uid))
+
+
+def test_bulk_empty_list_is_noop(seeded):
+    conn, uid = seeded
+    assert repository.set_issue_statuses(conn, [], "accepted") == 0
+
+
+def test_bulk_invalid_status_rejected(seeded):
+    conn, uid = seeded
+    with pytest.raises(ValueError):
+        repository.set_issue_statuses(conn, [1], "nope")

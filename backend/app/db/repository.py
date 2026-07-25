@@ -154,6 +154,23 @@ def update_issue_status(
     conn.commit()
 
 
+def set_issue_statuses(conn: psycopg.Connection, issue_ids: list[int], status: str) -> int:
+    """Bulk triage: set many issues to one status in a single statement."""
+    if status not in VALID_STATUSES:
+        raise ValueError(f"invalid status: {status!r}")
+    ids = [int(i) for i in issue_ids]
+    if not ids:
+        return 0
+    conn.execute(
+        "UPDATE issues SET status = %s, "
+        "reviewed_at = CASE WHEN %s = 'flagged' THEN NULL ELSE now() END "
+        "WHERE id = ANY(%s)",
+        (status, status, ids),
+    )
+    conn.commit()
+    return len(ids)
+
+
 def triage_counts(conn: psycopg.Connection, upload_id: int) -> dict[str, int]:
     """Issue counts by triage status for one upload."""
     rows = conn.execute(

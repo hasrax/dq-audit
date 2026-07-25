@@ -87,6 +87,7 @@ def run_rules(directory, source_client=None, reference_date: datetime | None = N
     for idx, issue in enumerate(issues, start=1):
         issue["id"] = idx
         issue["source_client"] = source_client
+        _attach_row_samples(issue, tables)
 
     return {
         "source_client": source_client,
@@ -94,6 +95,30 @@ def run_rules(directory, source_client=None, reference_date: datetime | None = N
         "relationships": relationships,
         "issues": issues,
     }
+
+
+def _attach_row_samples(issue: dict, tables: dict[str, pd.DataFrame]) -> None:
+    """Snapshot the actual values of an issue's sampled rows at audit time.
+
+    Stored under row_reference['samples'] so the triage UI can show the
+    offending rows even when the source file is gone (e.g. an in-app
+    upload processed from a temp dir).
+    """
+    ref = issue.get("row_reference") or {}
+    sample_rows = ref.get("sample_rows") or []
+    df = tables.get(issue["table_name"])
+    if df is None or not sample_rows:
+        return
+    samples = []
+    for r in sample_rows:
+        if 0 <= r < len(df):
+            samples.append({
+                "row": int(r),
+                "values": {c: (None if pd.isna(df.iat[r, i]) else str(df.iat[r, i]))
+                           for i, c in enumerate(df.columns)},
+            })
+    ref["samples"] = samples
+    issue["row_reference"] = ref
 
 
 def summarize(result: dict) -> dict:

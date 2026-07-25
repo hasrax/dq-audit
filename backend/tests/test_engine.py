@@ -11,6 +11,16 @@ USSAWATTE_DIR = Path(__file__).resolve().parents[2] / "data" / "ussawatte"
 REF = datetime(2026, 7, 18)
 
 
+def test_issues_carry_row_sample_snapshots():
+    result = run_rules(HEMAS_DIR, reference_date=REF)
+    with_samples = [i for i in result["issues"] if (i["row_reference"] or {}).get("samples")]
+    assert with_samples, "expected at least one issue with captured row samples"
+    sample = with_samples[0]["row_reference"]["samples"][0]
+    assert "row" in sample and isinstance(sample["values"], dict)
+    # values are JSON-safe (str or None)
+    assert all(v is None or isinstance(v, str) for v in sample["values"].values())
+
+
 def test_run_rules_on_hemas_produces_issues_across_dimensions():
     result = run_rules(HEMAS_DIR, reference_date=REF)
     issues = result["issues"]

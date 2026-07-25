@@ -34,6 +34,7 @@ from app.eval.figures import figure_png_bytes
 from app.eval.triage_metrics import compute_triage_metrics
 from app.export import issues_to_csv, score_to_csv
 from app.llm.run_audit import audit_directory
+from app.scoring.score import load_weights, score_contributions
 from app.scoring.score import DEFAULT_K, DIMENSION_ALIASES, SEVERITY_POINTS
 
 # Temporary working name — change these two lines to rebrand the whole app.
@@ -393,6 +394,24 @@ def _render_scores(conn, upload: dict) -> None:
         unsafe_allow_html=True,
     )
     st.caption("Excludes issues rejected in triage. Recomputes as you review.")
+
+    with st.expander("⚖️ How the score is weighted"):
+        weights = load_weights()
+        contribs = score_contributions(score)
+        rows = [
+            {
+                "Dimension": label,
+                "Weight": f"{weights[key[:-6]] * 100:.0f}%",
+                "Health (0–100)": f"{score[key]:.0f}",
+                "Contribution": contribs[key[:-6]],
+            }
+            for label, key in DIMENSION_ROWS
+        ]
+        st.dataframe(rows, width="stretch", hide_index=True)
+        st.caption(
+            f"Weight × health = contribution; contributions sum to the overall "
+            f"score ({overall:.0f}). Retune in config/score_weights.json."
+        )
 
     st.download_button(
         "⬇️ Export score summary (CSV)",

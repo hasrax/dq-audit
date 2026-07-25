@@ -37,6 +37,29 @@ from app.scoring.score import DEFAULT_K, DIMENSION_ALIASES, SEVERITY_POINTS
 APP_NAME = "ClarityDQ"
 APP_TAGLINE = "Explainable Data Quality Audit for SeefaERP"
 
+ABOUT_MD = f"""
+**{APP_NAME}** is an explainable data quality audit tool for SeefaERP SME
+exports. It reads CSV/Excel files (no database access) and flags issues in
+plain language.
+
+**Two-error taxonomy — how issues are found:**
+- ⚙️ **Rules (Type 1)** — deterministic checks over *every row*:
+  completeness, validity, consistency, uniqueness, timeliness, and
+  cross-table referential integrity.
+- 🤖 **LLM (Type 2)** — an AI auditor on a small *pseudonymized* sample
+  catches *contextual* problems rules can't express (implausible discounts,
+  ×100 quantities, price outliers, near-duplicates).
+
+The two are **complementary**, not redundant — see the complementarity
+figure on the Scores tab.
+
+**DQ score** is severity-weighted (not a flat average), so a critical
+cross-table break outweighs a handful of trivial nulls.
+
+**Triage** — mark each issue accept / reject / consider. Those decisions
+become the ground truth that measures the tool's own precision.
+"""
+
 DIMENSIONS = ["completeness", "validity", "consistency", "uniqueness", "timeliness", "cross_table", "accuracy"]
 STATUSES = ["flagged", "accepted", "rejected", "considered"]
 STATUS_LABEL = {"flagged": "⚪ Flagged", "accepted": "✅ Accepted", "rejected": "❌ Rejected", "considered": "🤔 Considered"}
@@ -176,6 +199,9 @@ def main() -> None:
     s3.metric("🤔 Considered", counts.get("considered", 0))
     s4.metric("⚪ Pending", counts.get("flagged", 0))
 
+    with st.sidebar.expander(f"ℹ️ About {APP_NAME}"):
+        st.markdown(ABOUT_MD)
+
     tab_overview, tab_upload, tab_triage, tab_scores = st.tabs(
         ["📋 Overview", "⬆️ New audit", "🧾 Triage", "📊 Scores & trend"]
     )
@@ -208,6 +234,7 @@ def main() -> None:
                 width="stretch",
                 help="Downloads the currently filtered issues (with triage status).",
             )
+            _render_bulk_actions(conn, [i["id"] for i in issues])
         for issue in issues:
             _render_issue_card(conn, issue, aliases)
 
@@ -469,6 +496,22 @@ def _render_header(upload: dict, counts: dict, total: int, reviewed: int) -> Non
     st.caption(f"Upload #{upload['id']} — **{upload['source_client']}** · {total} issues")
     if total:
         st.progress(reviewed / total, text=f"{reviewed} of {total} reviewed")
+
+
+def _render_bulk_actions(conn, issue_ids: list[int]) -> None:
+    with st.expander(f"⚡ Bulk actions — apply to all {len(issue_ids)} shown"):
+        cols = st.columns(4)
+        actions = [
+            ("✅ Accept all", "accepted", "bulk_acc"),
+            ("❌ Reject all", "rejected", "bulk_rej"),
+            ("🤔 Consider all", "considered", "bulk_con"),
+            ("↩️ Reset all", "flagged", "bulk_reset"),
+        ]
+        for col, (label, status, key) in zip(cols, actions):
+            if col.button(label, key=key, width="stretch"):
+                repository.set_issue_statuses(conn, issue_ids, status)
+                st.rerun()
+        st.caption("Applies to the current filtered view. Reversible — re-filter and reset any time.")
 
 
 def _render_issue_card(conn, issue: dict, aliases: dict | None = None) -> None:

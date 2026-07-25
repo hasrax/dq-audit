@@ -27,6 +27,7 @@ import streamlit as st
 from app.aliases import display_columns, load_aliases
 from app.db import repository
 from app.db.persist import persist_audit
+from app.eval.complementarity import real_complementarity
 from app.eval.triage_metrics import compute_triage_metrics
 from app.export import issues_to_csv, score_to_csv
 from app.llm.run_audit import audit_directory
@@ -159,6 +160,7 @@ def main() -> None:
     f_dimension = _filter("Dimension", DIMENSIONS)
     f_severity = _filter("Severity", ["high", "medium", "low"])
     f_status = _filter("Status", STATUSES, default="flagged")
+    f_fixable = _filter("Fixable", ["yes", "no"])
 
     counts = repository.triage_counts(conn, uid)
     total = upload["issue_count"]
@@ -192,6 +194,8 @@ def main() -> None:
             severity=_none_if_all(f_severity),
             status=_none_if_all(f_status),
         )
+        if f_fixable != ALL:
+            issues = [i for i in issues if i.get("fixable") == f_fixable]
         aliases = load_aliases(upload["source_client"])
         head_l, head_r = st.columns([3, 1])
         head_l.caption(f"Showing {len(issues)} issue(s)")
@@ -348,6 +352,35 @@ def _render_scores(conn, upload: dict) -> None:
         )
 
     _render_triage_metrics(conn, upload)
+    _render_complementarity(conn, upload)
+
+
+def _render_complementarity(conn, upload: dict) -> None:
+    st.markdown("#### Rule–LLM complementarity (E2)")
+    comp = real_complementarity(repository.fetch_issues(conn, upload["id"]))
+    if comp["n_locations"] == 0:
+        st.caption("No issues to analyse yet.")
+        return
+
+    o = comp["overall"]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("⚙️ Rule-only", f"{o['rule_only']}", f"{o['rule_only_pct']}%")
+    c2.metric("🤖 LLM-only", f"{o['llm_only']}", f"{o['llm_only_pct']}%")
+    c3.metric("🔗 Both", f"{o['both']}", f"{o['both_pct']}%")
+    st.caption(
+        f"{comp['n_locations']} distinct issue locations. A low **Both** share means "
+        "the rules and the LLM catch *different* problems — complementary, not redundant."
+    )
+
+    by_dim = comp["by_dimension"]
+    if by_dim:
+        df = pd.DataFrame(
+            [
+                {"dimension": d, "Rule only": v["rule_only"], "LLM only": v["llm_only"], "Both": v["both"]}
+                for d, v in by_dim.items()
+            ]
+        ).set_index("dimension")
+        st.bar_chart(df, color=["#2563eb", "#7c3aed", "#14b8a6"], horizontal=True, stack=True)
 
 
 def _pct_or_dash(value) -> str:
@@ -446,6 +479,10 @@ def _render_issue_card(conn, issue: dict, aliases: dict | None = None) -> None:
     location = issue["table_name"] + (f".{col_display}" if col_display else "")
 
     pills = _pill(severity.upper(), sev_color) + _pill(src_label, src_color) + _outline_pill(issue["dimension"])
+    if issue.get("fixable") == "yes":
+        pills += _pill("✓ Fixable", "#16a34a")
+    elif issue.get("fixable") == "no":
+        pills += _outline_pill("Not fixable")
     if issue["status"] != "flagged":
         pills += _outline_pill(STATUS_LABEL.get(issue["status"], issue["status"]))
 
@@ -455,8 +492,6 @@ def _render_issue_card(conn, issue: dict, aliases: dict | None = None) -> None:
         meta_bits.append(f"Affected rows: <b>{ref['count']}</b>")
     if ref.get("sample_rows"):
         meta_bits.append("e.g. rows " + ", ".join(str(r) for r in ref["sample_rows"][:5]))
-    if issue.get("fixable"):
-        meta_bits.append(f"Fixable: <b>{html.escape(issue['fixable'])}</b>")
 
     rec_html = f'<div class="issue-rec">💡 {html.escape(issue["recommendation"])}</div>' if issue.get("recommendation") else ""
     tint = f"rgba({int(sev_color[1:3],16)},{int(sev_color[3:5],16)},{int(sev_color[5:7],16)},0.05)"
@@ -473,6 +508,19 @@ def _render_issue_card(conn, issue: dict, aliases: dict | None = None) -> None:
 </div>''',
         unsafe_allow_html=True,
     )
+
+    samples = ref.get("samples")
+    if samples:
+        shown, total_affected = len(samples), ref.get("count", len(samples))
+        with st.expander(f"🔎 View affected rows (sample of {shown} of {total_affected})"):
+            table = issue["table_name"]
+            preview = []
+            for s in samples:
+                row = {"row #": s["row"]}
+                for col, val in s["values"].items():
+                    row[display_columns(aliases or {}, table, col)] = val
+                preview.append(row)
+            st.dataframe(preview, width="stretch", hide_index=True)
 
     b1, b2, b3, spacer = st.columns([1, 1, 1, 5])
     if b1.button("✅ Accept", key=f"acc_{issue['id']}", width="stretch"):

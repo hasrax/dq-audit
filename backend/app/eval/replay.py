@@ -90,14 +90,14 @@ def main(argv: list[str] | None = None) -> None:
     from app.db.persist import persist_audit
 
     for cutoff, directory in snapshots:
-        llm_issues = None
+        llm_issues, prompt_log = None, []
         if "--llm" in argv:
             from app.llm.run_audit import audit_directory
 
-            audited = audit_directory(directory, source_client=replay_client)
+            audited = audit_directory(directory, source_client=replay_client, prompt_log=prompt_log)
             llm_issues = [i for issues in audited.values() for i in issues]
         r = persist_audit(directory, source_client=replay_client, llm_issues=llm_issues,
-                          data_as_of=cutoff, filename=f"{label} @ {cutoff}")
+                          data_as_of=cutoff, filename=f"{label} @ {cutoff}", prompt_log=prompt_log)
         rec = r["recurrence"]
         print(f"{label} @ {cutoff}: upload #{r['upload_id']}, {r['issues']} issues "
               f"({rec['new']} new, {rec['recurring']} recurring: {rec['worsening']} worsening, "

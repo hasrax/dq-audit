@@ -52,22 +52,24 @@ def audit_table(
     relationships: list[dict],
     client: LLMClient | None = None,
     schema_context: str = "",
+    org_context: str = "",
 ) -> list[dict]:
     """Run the LLM auditor on one table's profile + pseudonymized sample.
 
     schema_context is the human-verified schema documentation for this
     table (see app.schema_docs.store.get_schema_context); it is prepended
     to the payload so the model reads columns by their verified meaning.
-    Empty -> the prompt is exactly as before docs existed.
+    org_context carries the organisation's notes and past accept/reject
+    decisions (see app.llm.feedback). Both empty -> the prompt is exactly
+    as before either feature existed.
 
     Retries once if the model's first reply isn't parseable JSON, then
     gives up and returns [] rather than raising -- a single unparseable
     table must not abort a whole-database audit.
     """
     client = client or LLMClient()
-    user = build_user_payload(profile, sample, relationships)
-    if schema_context:
-        user = schema_context + "\n\n" + user
+    user = "\n\n".join([c for c in (schema_context, org_context) if c]
+                       + [build_user_payload(profile, sample, relationships)])
 
     parsed = complete_json(client, SYSTEM_PROMPT, user)
     issues = parsed.get("issues", []) if parsed else []

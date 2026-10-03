@@ -111,11 +111,12 @@ def save_rules(
             what, why = describe_rule(r, aliases)
             row = cur.execute(
                 "INSERT INTO rules (upload_id, source_client, rule_key, template, category, "
-                "table_name, column_name, parameters, what_text, why_text, evidence, violation_count) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                "table_name, column_name, parameters, what_text, why_text, evidence, violation_count, enabled) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (upload_id, source_client, r["rule_key"], r["template"], r["category"],
                  r["table_name"], r["column_name"], json.dumps(r["parameters"], default=str),
-                 what, why, json.dumps(r["evidence"], default=str), r["violation_count"]),
+                 what, why, json.dumps(r["evidence"], default=str), r["violation_count"],
+                 r.get("enabled", True)),
             ).fetchone()
             ids[r["rule_key"]] = row[0]
     conn.commit()
@@ -170,6 +171,27 @@ def fetch_rules(
         ).fetchall()
 
 
+def active_suppressions(conn: psycopg.Connection, source_client: str) -> dict[str, dict]:
+    """Rules an admin marked "not applicable to us" for a client: {rule_key: row}."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute(
+            "SELECT * FROM rule_suppressions WHERE source_client = %s AND active", (source_client,)
+        ).fetchall()
+    return {r["rule_key"]: r for r in rows}
+
+
+def set_rule_suppressed(conn: psycopg.Connection, source_client: str, rule_key: str, suppressed: bool,
+                        by: str | None = None, reason: str | None = None) -> None:
+    conn.execute(
+        "INSERT INTO rule_suppressions (source_client, rule_key, reason, disabled_by, active) "
+        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (source_client, rule_key) DO UPDATE SET "
+        "active = EXCLUDED.active, reason = COALESCE(EXCLUDED.reason, rule_suppressions.reason), "
+        "disabled_by = EXCLUDED.disabled_by, disabled_at = now()",
+        (source_client, rule_key, reason, by, suppressed),
+    )
+    conn.commit()
+
+
 def fetch_rule(conn: psycopg.Connection, rule_id: int) -> dict | None:
     with conn.cursor(row_factory=dict_row) as cur:
         return cur.execute("SELECT * FROM rules WHERE id = %s", (rule_id,)).fetchone()
@@ -218,20 +240,24 @@ def update_issue_status(
     issue_id: int,
     status: str,
     user_note: str | None = None,
+    reviewed_by: str | None = None,
 ) -> None:
-    """Record a triage decision, stamping reviewed_at (throughput evidence)."""
+    """Record a triage decision, stamping reviewed_at (throughput evidence)
+    and who made it."""
     if status not in VALID_STATUSES:
         raise ValueError(f"invalid status: {status!r}")
     conn.execute(
         "UPDATE issues SET status = %s, user_note = %s, "
-        "reviewed_at = CASE WHEN %s = 'flagged' THEN NULL ELSE now() END "
+        "reviewed_at = CASE WHEN %s = 'flagged' THEN NULL ELSE now() END, "
+        "reviewed_by = CASE WHEN %s = 'flagged' THEN NULL ELSE %s END "
         "WHERE id = %s",
-        (status, user_note, status, issue_id),
+        (status, user_note, status, status, reviewed_by, issue_id),
     )
     conn.commit()
 
 
-def set_issue_statuses(conn: psycopg.Connection, issue_ids: list[int], status: str) -> int:
+def set_issue_statuses(conn: psycopg.Connection, issue_ids: list[int], status: str,
+                       reviewed_by: str | None = None) -> int:
     """Bulk triage: set many issues to one status in a single statement."""
     if status not in VALID_STATUSES:
         raise ValueError(f"invalid status: {status!r}")
@@ -240,9 +266,10 @@ def set_issue_statuses(conn: psycopg.Connection, issue_ids: list[int], status: s
         return 0
     conn.execute(
         "UPDATE issues SET status = %s, "
-        "reviewed_at = CASE WHEN %s = 'flagged' THEN NULL ELSE now() END "
+        "reviewed_at = CASE WHEN %s = 'flagged' THEN NULL ELSE now() END, "
+        "reviewed_by = CASE WHEN %s = 'flagged' THEN NULL ELSE %s END "
         "WHERE id = ANY(%s)",
-        (status, status, ids),
+        (status, status, status, reviewed_by, ids),
     )
     conn.commit()
     return len(ids)

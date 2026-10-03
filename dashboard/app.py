@@ -32,7 +32,7 @@ import json
 from app.eval.complementarity import real_complementarity
 from app.eval.figures import figure_png_bytes
 from app.eval.triage_metrics import compute_triage_metrics
-from app.export import issues_to_csv, score_to_csv
+from app.export import issues_to_csv, issues_to_xlsx, score_to_csv
 from app.llm.run_audit import audit_directory
 from app.scoring.score import load_weights, score_contributions
 from app.scoring.score import DEFAULT_K, DIMENSION_ALIASES, SEVERITY_POINTS
@@ -41,6 +41,11 @@ from app.schema_docs.generate import document_directory
 from app.schema_docs.prompt import MODULES
 from app.rules.describe import CATEGORY_LABEL
 from app.monitoring import recurrence
+from app.llm import feedback
+from app.chat import assistant
+from app.auth import users as auth
+from app.llm import selection as llm_selection
+from app.aliases import base_client
 
 # Temporary working name — change these two lines to rebrand the whole app.
 APP_NAME = "ClarityDQ"
@@ -160,7 +165,12 @@ def _status_color(value: float) -> str:
 
 @st.cache_resource
 def get_conn():
-    return repository.connect()
+    # Autocommit: this connection lives as long as the server. Without it,
+    # the first SELECT opens a transaction that never ends ("idle in
+    # transaction"), which holds locks that block schema migrations.
+    conn = repository.connect()
+    conn.autocommit = True
+    return conn
 
 
 def _aliases(conn, source_client: str) -> dict:
@@ -184,10 +194,59 @@ def _outline_pill(text: str) -> str:
     return f'<span class="pill pill-outline">{html.escape(text)}</span>'
 
 
+def _current_user() -> dict | None:
+    return st.session_state.get("user")
+
+
+def _username() -> str | None:
+    user = _current_user()
+    return user["username"] if user else None
+
+
+def _is_admin() -> bool:
+    user = _current_user()
+    return bool(user and user["role"] == "admin")
+
+
+def _render_login(conn) -> None:
+    _, mid, _ = st.columns([1, 1.2, 1])
+    with mid:
+        st.markdown("### Sign in")
+        st.caption("Use the account your administrator created for you.")
+        if auth.count_users(conn) == 0:
+            st.info(
+                "No accounts exist yet. Create the first administrator from a terminal:\n\n"
+                "`cd backend && python -m app.auth.users create admin --role=admin`"
+            )
+        with st.form("login"):
+            username = st.text_input("Username", autocomplete="username")
+            password = st.text_input("Password", type="password", autocomplete="current-password")
+            submitted = st.form_submit_button("Sign in", type="primary", width="stretch")
+        if submitted:
+            user = auth.authenticate(conn, username, password)
+            if user:
+                st.session_state["user"] = user
+                st.session_state["username"] = user["username"]
+                st.rerun()
+            st.error("That username and password don't match. Please try again.")
+
+
+def _render_account_sidebar() -> None:
+    user = _current_user()
+    role = "Administrator" if user["role"] == "admin" else "Reviewer"
+    with st.sidebar.container(border=True):
+        st.markdown(f"👤 **{html.escape(user['username'])}**  \n:gray[{role}]")
+        if st.button("Sign out", key="sign_out", width="stretch"):
+            for k in ("user", "username"):
+                st.session_state.pop(k, None)
+            st.rerun()
+
+
 def main() -> None:
     st.set_page_config(page_title=APP_NAME, page_icon="🔍", layout="wide")
     st.markdown(CSS, unsafe_allow_html=True)
     conn = get_conn()
+    repository.apply_schema(conn)
 
     st.markdown(
         f'<div class="topbar"><span class="brand">🔍 <span class="mark">{APP_NAME}</span></span>'
@@ -195,9 +254,19 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
+    if _current_user() is None:
+        _render_login(conn)
+        return
+    _render_account_sidebar()
+    admin = _is_admin()
+
     uploads = repository.list_uploads(conn)
     if not uploads:
-        st.info("No audit runs found yet. Run `python -m app.db.persist <data_dir>` first.")
+        if admin:
+            st.info("No audits yet — upload an export below to run the first one.")
+            _render_upload(conn)
+        else:
+            st.info("No audits yet. An administrator needs to run the first audit.")
         return
 
     upload_labels = {
@@ -209,12 +278,14 @@ def main() -> None:
     uid = upload["id"]
 
     st.sidebar.markdown("### Filters")
-    f_source = _filter("Source", ["rule", "llm"])
-    f_dimension = _filter("Dimension", DIMENSIONS)
-    f_severity = _filter("Severity", ["high", "medium", "low"])
-    f_status = _filter("Status", STATUSES, default="flagged")
-    f_fixable = _filter("Fixable", ["yes", "no"])
-    f_trend = _filter("Trend", TRENDS)
+    filters = {
+        "source": _filter("Source", ["rule", "llm"]),
+        "dimension": _filter("Dimension", DIMENSIONS),
+        "severity": _filter("Severity", ["high", "medium", "low"]),
+        "status": _filter("Status", STATUSES, default="flagged"),
+        "fixable": _filter("Fixable", ["yes", "no"]),
+        "trend": _filter("Trend", TRENDS),
+    }
 
     counts = repository.triage_counts(conn, uid)
     total = upload["issue_count"]
@@ -233,64 +304,124 @@ def main() -> None:
     with st.sidebar.expander(f"ℹ️ About {APP_NAME}"):
         st.markdown(ABOUT_MD)
 
-    tab_overview, tab_upload, tab_triage, tab_rules, tab_docs, tab_rel, tab_scores = st.tabs(
-        ["📋 Overview", "⬆️ New audit", "🧾 Triage", "📏 Rules", "📘 Schema review",
-         "🔗 Relationships", "📊 Scores & trend"]
+    # Reviewer: triage, chat, export (+ read-only views). Admin: everything.
+    pages = [
+        ("📋 Overview", lambda: _render_overview(conn, upload)),
+        ("🧾 Triage", lambda: _render_triage(conn, upload, filters)),
+        ("💬 Ask", lambda: _render_chat(conn, upload)),
+        ("📏 Rules", lambda: _render_rules(conn, upload)),
+        ("📊 Scores & trend", lambda: _render_scores(conn, upload)),
+        ("🔗 Relationships", lambda: _render_relationships(conn, upload)),
+    ]
+    if admin:
+        pages[1:1] = [("⬆️ New audit", lambda: _render_upload(conn))]
+        pages += [
+            ("📘 Schema review", lambda: _render_schema_review(conn, upload)),
+            ("🏢 Organisation", lambda: _render_organisation(conn, upload)),
+            ("⚙️ Settings", lambda: _render_settings(conn)),
+        ]
+    for tab, (_, render) in zip(st.tabs([label for label, _ in pages]), pages):
+        with tab:
+            render()
+
+
+def _render_triage(conn, upload: dict, filters: dict) -> None:
+    uid = upload["id"]
+    issues = repository.fetch_issues(
+        conn, uid,
+        source=_none_if_all(filters["source"]),
+        dimension=_none_if_all(filters["dimension"]),
+        severity=_none_if_all(filters["severity"]),
+        status=_none_if_all(filters["status"]),
     )
-
-    with tab_overview:
-        _render_overview(conn, upload)
-
-    with tab_upload:
-        _render_upload(conn)
-
-    with tab_triage:
-        issues = repository.fetch_issues(
-            conn, uid,
-            source=_none_if_all(f_source),
-            dimension=_none_if_all(f_dimension),
-            severity=_none_if_all(f_severity),
-            status=_none_if_all(f_status),
+    if filters["fixable"] != ALL:
+        issues = [i for i in issues if i.get("fixable") == filters["fixable"]]
+    if filters["trend"] == "recurring":
+        issues = [i for i in issues if i.get("trend_status") not in (None, "new")]
+    elif filters["trend"] != ALL:
+        issues = [i for i in issues if i.get("trend_status") == filters["trend"]]
+    aliases = _aliases(conn, upload["source_client"])
+    head_l, head_csv, head_xlsx = st.columns([3, 1, 1])
+    head_l.caption(f"Showing {len(issues)} issue(s) · filters are in the sidebar")
+    if issues:
+        org = client_label(upload["source_client"])
+        stem = f"{org.replace(' ', '_').replace('·', '')}_audit{uid}_issues"
+        head_csv.download_button(
+            "⬇️ CSV",
+            data=issues_to_csv(issues, aliases, organisation=org),
+            file_name=f"{stem}.csv",
+            mime="text/csv",
+            width="stretch",
+            help="Downloads exactly the issues shown (current filters), with triage status.",
         )
-        if f_fixable != ALL:
-            issues = [i for i in issues if i.get("fixable") == f_fixable]
-        if f_trend == "recurring":
-            issues = [i for i in issues if i.get("trend_status") not in (None, "new")]
-        elif f_trend != ALL:
-            issues = [i for i in issues if i.get("trend_status") == f_trend]
-        aliases = _aliases(conn, upload["source_client"])
-        head_l, head_r = st.columns([3, 1])
-        head_l.caption(f"Showing {len(issues)} issue(s)")
-        if issues:
-            head_r.download_button(
-                "⬇️ Export CSV",
-                data=issues_to_csv(issues, aliases),
-                file_name=f"issues_upload_{uid}.csv",
-                mime="text/csv",
-                width="stretch",
-                help="Downloads the currently filtered issues (with triage status).",
-            )
-            _render_bulk_actions(conn, [i["id"] for i in issues])
-        rules_by_id = {r["id"]: r for r in repository.fetch_rules(conn, uid)}
-        histories = recurrence.histories_for_upload(conn, uid)
-        projections = recurrence.projections_for_upload(conn, uid)
-        for issue in issues:
-            _render_issue_card(
-                conn, issue, aliases, rules_by_id.get(issue.get("rule_ref")),
-                histories.get(issue["id"]), projections.get(issue["id"]),
-            )
+        head_xlsx.download_button(
+            "⬇️ Excel",
+            data=issues_to_xlsx(issues, aliases, organisation=org,
+                                title=f"{org} — audit #{uid} issues", filters=filters),
+            file_name=f"{stem}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+            help="Formatted workbook with an issue sheet and a summary by dimension and severity.",
+        )
+        _render_bulk_actions(conn, [i["id"] for i in issues])
+    else:
+        st.info("No issues match these filters. Try setting **Status** to *(all)* in the sidebar.")
+    rules_by_id = {r["id"]: r for r in repository.fetch_rules(conn, uid)}
+    histories = recurrence.histories_for_upload(conn, uid)
+    projections = recurrence.projections_for_upload(conn, uid)
+    for issue in issues:
+        _render_issue_card(
+            conn, issue, aliases, rules_by_id.get(issue.get("rule_ref")),
+            histories.get(issue["id"]), projections.get(issue["id"]),
+        )
 
-    with tab_rules:
-        _render_rules(conn, upload)
 
-    with tab_docs:
-        _render_schema_review(conn, upload)
+def _render_settings(conn) -> None:
+    st.markdown("#### AI model")
+    st.caption(
+        "Choose which AI model the auditor, schema drafting and chat use. Options come from the "
+        "server's configuration file. Whichever you choose, names, phone numbers and other personal "
+        "details are hidden (pseudonymised) before anything is sent."
+    )
+    options = llm_selection.llm_options()
+    current = llm_selection.active_option(conn)
+    names = [o["name"] for o in options]
 
-    with tab_rel:
-        _render_relationships(conn, upload)
+    def _fmt(name: str) -> str:
+        o = next(x for x in options if x["name"] == name)
+        where = "🖥️ runs on this computer" if llm_selection.is_local(o) else "☁️ cloud service"
+        return f"{name} — {o['model']} · {where}"
 
-    with tab_scores:
-        _render_scores(conn, upload)
+    picked = st.radio("Active model", names, index=names.index(current["name"]), format_func=_fmt)
+    if picked != current["name"]:
+        llm_selection.set_selected(conn, picked, _username())
+        st.toast(f"AI model set to {picked}", icon="⚙️")
+        st.rerun()
+    if len(options) == 1:
+        st.caption("Only one option is configured. Add more with LLM_OPTIONS in backend/.env.")
+
+    st.markdown("#### People")
+    people = auth.list_users(conn)
+    st.dataframe(
+        [{"Username": u["username"], "Role": u["role"].title(), "Created": f"{u['created_at']:%d %b %Y}"}
+         for u in people],
+        width="stretch", hide_index=True,
+    )
+    with st.form("new_user", clear_on_submit=True):
+        st.markdown("**Add a person**")
+        c1, c2, c3 = st.columns([1.2, 1.2, 0.8])
+        new_name = c1.text_input("Username")
+        new_pw = c2.text_input("Temporary password", type="password",
+                               help=f"At least {auth.MIN_PASSWORD_LENGTH} characters.")
+        new_role = c3.selectbox("Role", auth.ROLES, index=1, format_func=str.title)
+        if st.form_submit_button("➕ Add person"):
+            try:
+                auth.create_user(conn, new_name, new_pw, new_role)
+                st.toast(f"Added {new_name}", icon="👤")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001 -- show validation / duplicate errors
+                conn.rollback()
+                st.error(f"Could not add this person: {exc}")
 
 
 CONFIDENCE_STYLE = {
@@ -323,6 +454,71 @@ def _evidence_text(rule: dict) -> str:
         shown = f"{value:,}" if isinstance(value, int) and not isinstance(value, bool) else value
         bits.append(f"{EVIDENCE_LABEL.get(key, key.replace('_', ' '))}: {shown}")
     return "Evidence — " + " · ".join(bits) if bits else "Evidence — none recorded"
+
+
+GENERAL_STARTERS = [
+    "What are the most serious problems in this audit?",
+    "Which table should we fix first, and why?",
+    "Explain the data quality score in simple terms.",
+]
+ISSUE_STARTERS = [
+    "Explain this issue in simple terms.",
+    "Why does this matter for the business?",
+    "How should we fix it?",
+]
+
+
+def _issue_option_label(issue: dict, aliases: dict) -> str:
+    col = display_columns(aliases, issue["table_name"], issue["column_name"])
+    where = issue["table_name"] + (f".{col}" if col else "")
+    return f"#{issue['id']} · {where} · {issue['dimension']} · {issue['severity']}"
+
+
+def _render_chat(conn, upload: dict) -> None:
+    uid = upload["id"]
+    username = st.session_state.get("username")
+    st.markdown("#### Ask about this audit")
+    st.caption(
+        "Ask in plain English about a specific issue or about your data in general. The assistant "
+        "answers only from this audit's results, statistics and verified descriptions — it never sees "
+        "your full data, and it will say so when a question can't be answered from what it has."
+    )
+
+    issues = repository.fetch_issues(conn, uid)
+    aliases = _aliases(conn, upload["source_client"])
+    by_id = {i["id"]: i for i in issues}
+    key = f"chat_issue_{uid}"
+    if st.session_state.get(key) not in by_id:
+        st.session_state[key] = None
+    issue_id = st.selectbox(
+        "Ask about",
+        [None, *by_id],
+        key=key,
+        format_func=lambda i: "🗂️ This audit in general" if i is None else _issue_option_label(by_id[i], aliases),
+    )
+    issue = by_id.get(issue_id)
+
+    turns = assistant.fetch_turns(conn, uid, issue_id, username)
+    starters = ISSUE_STARTERS if issue else GENERAL_STARTERS
+    picked = st.pills("Try asking", starters, key=f"starter_{uid}_{issue_id}_{len(turns)}")
+
+    with st.container(border=True, height=440):
+        if not turns:
+            st.caption("No questions yet in this conversation.")
+        for t in turns:
+            with st.chat_message(t["role"], avatar="🧑" if t["role"] == "user" else "🔍"):
+                st.markdown(t["content"])
+
+    question = st.chat_input("Type your question…", key=f"chat_input_{uid}") or picked
+    if question:
+        assistant.save_turn(conn, uid, "user", question, issue_id, username)
+        with st.spinner("Thinking…"):
+            try:
+                reply = assistant.answer(conn, upload, question, [dict(t) for t in turns], issue)
+            except Exception as exc:  # noqa: BLE001 -- show the problem instead of crashing the page
+                reply = f"Sorry — the assistant is unavailable right now ({exc.__class__.__name__}). Please try again."
+        assistant.save_turn(conn, uid, "assistant", reply, issue_id, username)
+        st.rerun()
 
 
 def _render_rules(conn, upload: dict) -> None:
@@ -362,11 +558,20 @@ def _render_rules(conn, upload: dict) -> None:
         and (mode == "all" or (mode == "violated") == bool(r["violation_count"]))
     ]
     st.caption(f"Showing {len(rules)} of {len(all_rules)} rules")
+    client = base_client(upload["source_client"])
+    suppressed = repository.active_suppressions(conn, client)
+    admin = _is_admin()
     for r in rules:
         broken = r["violation_count"]
-        accent = "#d92d20" if broken else "#16a34a"
-        badge = (_pill(f"⚠ {broken:,} row(s) break this rule", "#d92d20") if broken
-                 else _pill("✓ Passed", "#16a34a"))
+        off = r["rule_key"] in suppressed
+        accent = "#98a2b3" if off else ("#d92d20" if broken else "#16a34a")
+        if off:
+            s_row = suppressed[r["rule_key"]]
+            badge = _pill(f"Not applicable · {s_row['disabled_by'] or 'admin'}, {s_row['disabled_at']:%d %b}", "#667085")
+        elif broken:
+            badge = _pill(f"⚠ {broken:,} row(s) break this rule", "#d92d20")
+        else:
+            badge = _pill("✓ Passed", "#16a34a")
         st.markdown(
             f'''<div class="rule-card" style="--accent:{accent}">
   <div class="issue-head"><span class="pills">{_outline_pill(CATEGORY_LABEL.get(r["category"], r["category"]))}{_outline_pill(r["table_name"])}</span>
@@ -377,6 +582,92 @@ def _render_rules(conn, upload: dict) -> None:
 </div>''',
             unsafe_allow_html=True,
         )
+        if admin and (broken or off):
+            label = "↩️ Apply this rule again" if off else "🚫 Not applicable to us"
+            if st.button(label, key=f"suppress_{r['id']}",
+                         help="Disabled rules still run but raise no issues in future audits for this organisation."):
+                repository.set_rule_suppressed(conn, client, r["rule_key"], not off, by=_username())
+                st.toast("Rule re-enabled for future audits" if off else
+                         "Rule disabled for future audits of this organisation", icon="📏")
+                st.rerun()
+
+
+def _render_organisation(conn, upload: dict) -> None:
+    client = upload["source_client"]
+    label = client_label(client)
+    st.markdown(f"#### What the AI knows about {label}")
+    st.caption(
+        "The AI auditor adapts to this organisation without any training: before each audit it is "
+        "given your notes below, plus recent AI findings your reviewers **accepted** (real issues) "
+        "and **rejected** (not problems), so it stops repeating findings you have already dismissed."
+    )
+
+    notes = feedback.list_notes(conn, client)
+    stats = feedback.feedback_stats(conn, client)
+    m = st.columns(3)
+    m[0].metric("📝 Active notes", sum(1 for n in notes if n["active"]))
+    m[1].metric("✅ Accepted AI findings", stats["accepted"])
+    m[2].metric("❌ Rejected AI findings", stats["rejected"])
+    if not (stats["accepted"] or stats["rejected"]):
+        st.caption("No AI findings have been reviewed yet. Accept or reject 🤖 LLM issues in 🧾 Triage "
+                   "and they will be used as examples in the next audit.")
+
+    st.markdown("##### Organisation notes")
+    with st.form(f"org_note_{client}", clear_on_submit=True):
+        text = st.text_area(
+            "Add a note the AI should always know",
+            placeholder="e.g. We are VAT-exempt, so a zero tax amount is normal.",
+            height=70,
+        )
+        if st.form_submit_button("➕ Add note", type="primary") and text.strip():
+            feedback.add_note(conn, client, text, created_by=_username())
+            st.toast("Note added — it will be used from the next AI audit", icon="📝")
+            st.rerun()
+
+    if not notes:
+        st.caption("No notes yet.")
+    for n in notes:
+        with st.container(border=True):
+            left, right = st.columns([5, 1.3])
+            state = "" if n["active"] else " · :gray[inactive]"
+            left.markdown(f"{'📝' if n['active'] else '💤'} {html.escape(n['note'])}")
+            left.caption(f"Added {n['created_at']:%d %b %Y}" + (f" by {n['created_by']}" if n["created_by"] else "") + state)
+            label_btn = "Deactivate" if n["active"] else "Reactivate"
+            if right.button(label_btn, key=f"note_toggle_{n['id']}", width="stretch"):
+                feedback.set_note_active(conn, n["id"], not n["active"])
+                st.rerun()
+
+    st.markdown("##### Preview what the AI will be told")
+    tables = sorted({r["table_name"] for r in repository.fetch_rules(conn, upload["id"])}
+                    or {i["table_name"] for i in repository.fetch_issues(conn, upload["id"])})
+    if tables:
+        table = st.selectbox("For table", tables, key=f"org_preview_{client}")
+        schema_ctx = docs_store.get_schema_context(client, table, conn=conn)
+        org_ctx, _ = feedback.feedback_context(conn, client, table, base_tokens=0)
+        preview = "\n\n".join(c for c in (schema_ctx, org_ctx) if c)
+        if preview:
+            st.code(preview, language=None, wrap_lines=True)
+        else:
+            st.caption("Nothing extra yet — the AI audits this table with the profile and sample only.")
+
+    log = feedback.fetch_prompt_log(conn, upload["id"])
+    if log:
+        with st.expander(f"🧾 What the AI was given in this audit ({len(log)} tables)"):
+            st.dataframe(
+                [
+                    {
+                        "Table": e["table_name"],
+                        "Notes": len(e["note_ids"]),
+                        "Accepted examples": len(e["accepted_issue_ids"]),
+                        "Rejected examples": len(e["rejected_issue_ids"]),
+                        "Verified schema docs": "yes" if e["schema_context"] else "no",
+                        "Prompt size (≈tokens)": e["est_prompt_tokens"],
+                        "Examples trimmed": e["trimmed_examples"],
+                    }
+                    for e in log
+                ],
+                width="stretch", hide_index=True,
+            )
 
 
 def _render_schema_review(conn, upload: dict) -> None:
@@ -441,7 +732,7 @@ def _render_schema_review(conn, upload: dict) -> None:
         if save or verify:
             docs_store.update_table(conn, client, table, desc.strip(), module)
             if verify:
-                n = docs_store.verify_table(conn, client, table)
+                n = docs_store.verify_table(conn, client, table, verified_by=_username())
                 st.toast(f"{table} verified ({n} column(s) confirmed)", icon="✅")
             st.rerun()
         fixed = []
@@ -490,7 +781,7 @@ def _render_doc_column(conn, col: dict) -> None:
                 [r.strip() for r in rules.splitlines() if r.strip()],
             )
             if verify:
-                docs_store.verify_column(conn, col["id"])
+                docs_store.verify_column(conn, col["id"], verified_by=_username())
             st.rerun()
 
         if conf == "VERIFIED":
@@ -638,11 +929,11 @@ def _process_upload(files, client: str, run_llm: bool, draft_docs: bool) -> dict
         (tmp / f.name).write_bytes(f.getvalue())
 
     drafted = document_directory(tmp, source_client=client) if draft_docs else {}
-    llm_issues = None
+    llm_issues, prompt_log = None, []
     if run_llm:
-        audited = audit_directory(tmp, source_client=client)
+        audited = audit_directory(tmp, source_client=client, prompt_log=prompt_log)
         llm_issues = [issue for table_issues in audited.values() for issue in table_issues]
-    result = persist_audit(tmp, source_client=client, llm_issues=llm_issues)
+    result = persist_audit(tmp, source_client=client, llm_issues=llm_issues, prompt_log=prompt_log)
     result["drafted_tables"] = len(drafted)
     return result
 
@@ -899,7 +1190,7 @@ def _render_bulk_actions(conn, issue_ids: list[int]) -> None:
         ]
         for col, (label, status, key) in zip(cols, actions):
             if col.button(label, key=key, width="stretch"):
-                repository.set_issue_statuses(conn, issue_ids, status)
+                repository.set_issue_statuses(conn, issue_ids, status, reviewed_by=_username())
                 st.rerun()
         st.caption("Applies to the current filtered view. Reversible — re-filter and reset any time.")
 
@@ -936,7 +1227,8 @@ def _render_issue_card(
     elif issue.get("fixable") == "no":
         pills += _outline_pill("Not fixable")
     if issue["status"] != "flagged":
-        pills += _outline_pill(STATUS_LABEL.get(issue["status"], issue["status"]))
+        who = f" by {issue['reviewed_by']}" if issue.get("reviewed_by") else ""
+        pills += _outline_pill(STATUS_LABEL.get(issue["status"], issue["status"]) + who)
 
     ref = issue.get("row_reference") or {}
     meta_bits = []
@@ -981,13 +1273,16 @@ def _render_issue_card(
             st.markdown(rule["why_text"])
             st.caption(_evidence_text(rule) + " · rule derived automatically from the data profile")
 
-    b1, b2, b3, spacer = st.columns([1, 1, 1, 5])
+    b1, b2, b3, b4, spacer = st.columns([1, 1, 1, 1.3, 3.7])
     if b1.button("✅ Accept", key=f"acc_{issue['id']}", width="stretch"):
         _decide(conn, issue["id"], "accepted")
     if b2.button("❌ Reject", key=f"rej_{issue['id']}", width="stretch"):
         _decide(conn, issue["id"], "rejected")
     if b3.button("🤔 Consider", key=f"con_{issue['id']}", width="stretch"):
         _decide(conn, issue["id"], "considered")
+    if b4.button("💬 Ask about this", key=f"ask_{issue['id']}", width="stretch"):
+        st.session_state[f"chat_issue_{issue['upload_id']}"] = issue["id"]
+        st.toast("Open the 💬 Ask tab to ask about this issue", icon="💬")
 
     with st.expander("📝 Add a note"):
         note = st.text_area(
@@ -995,14 +1290,15 @@ def _render_issue_card(
             label_visibility="collapsed", placeholder="Optional context for this decision…",
         )
         if st.button("Save note", key=f"savenote_{issue['id']}"):
-            repository.update_issue_status(conn, issue["id"], issue["status"], note or None)
+            repository.update_issue_status(conn, issue["id"], issue["status"], note or None,
+                                           reviewed_by=issue.get("reviewed_by") or _username())
             st.rerun()
 
 
 def _decide(conn, issue_id: int, status: str) -> None:
     # preserve any note already typed for this issue
     note = st.session_state.get(f"note_{issue_id}") or None
-    repository.update_issue_status(conn, issue_id, status, note)
+    repository.update_issue_status(conn, issue_id, status, note, reviewed_by=_username())
     st.rerun()
 
 

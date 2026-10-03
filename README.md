@@ -69,6 +69,9 @@ cp backend/.env.example backend/.env      # then edit backend/.env with real val
 #    create an empty database named dq_audit in PostgreSQL; numbered
 #    migrations (backend/app/db/migrations/NNN_*.sql) are applied
 #    automatically on first use and recorded in schema_migrations.
+
+# 4. first administrator (password is prompted, never typed on the command line)
+cd backend && python -m app.auth.users create admin --role=admin
 ```
 
 `backend/.env` (gitignored) holds the LLM and PostgreSQL credentials — see
@@ -101,7 +104,10 @@ python -m app.eval.replay data/hemas --client=hemas [--llm]
 # verified docs are added to later LLM audits). Skips already-documented tables.
 python -m app.schema_docs.generate data/hemas --client=hemas [--regenerate]
 
-# the tool (Overview / Upload / Triage / Rules / Schema review / Relationships / Scores)
+# the tool -- sign in first. Reviewers: Overview, Triage, Ask (chat), Rules,
+# Scores, Relationships, CSV/Excel export. Admins also get New audit, Schema
+# review, Organisation (notes the AI always sees + what it learned from
+# triage), and Settings (AI model choice from LLM_OPTIONS, people).
 streamlit run dashboard/app.py
 
 # HTTP API (health, uploads, issues, score, triage)

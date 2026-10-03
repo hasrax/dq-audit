@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 import pandas as pd
 import streamlit as st
 
-from app.aliases import client_label, display_columns, load_aliases, load_client_labels
+from app.aliases import client_label, display_columns, load_client_labels
 from app.db import repository
 from app.db.persist import persist_audit
 import json
@@ -39,6 +39,7 @@ from app.scoring.score import DEFAULT_K, DIMENSION_ALIASES, SEVERITY_POINTS
 from app.schema_docs import store as docs_store
 from app.schema_docs.generate import document_directory
 from app.schema_docs.prompt import MODULES
+from app.rules.describe import CATEGORY_LABEL
 
 # Temporary working name — change these two lines to rebrand the whole app.
 APP_NAME = "ClarityDQ"
@@ -89,6 +90,14 @@ CSS = """
 .issue-desc { margin-top: 8px; font-size: 0.96rem; line-height: 1.45; }
 .issue-rec  { margin-top: 6px; font-size: 0.88rem; opacity: 0.75; font-style: italic; }
 .issue-meta { margin-top: 8px; font-size: 0.78rem; opacity: 0.65; }
+.rule-card {
+  border: 1px solid rgba(128,128,128,0.25);
+  border-left: 6px solid var(--accent, #16a34a);
+  border-radius: 10px; padding: 12px 16px 10px 16px; margin: 0 0 10px 0;
+}
+.rule-what { font-size: 1.0rem; font-weight: 650; line-height: 1.4; margin-top: 6px; }
+.rule-why  { margin-top: 4px; font-size: 0.9rem; line-height: 1.45; opacity: 0.8; }
+.rule-ev   { margin-top: 6px; font-size: 0.76rem; opacity: 0.6; }
 .pills { display:flex; gap:6px; flex-wrap:wrap; }
 .pill {
   display:inline-block; padding: 2px 10px; border-radius: 999px;
@@ -145,11 +154,7 @@ def get_conn():
 
 
 def _aliases(conn, source_client: str) -> dict:
-    """Column display names: config/aliases overlaid with verified schema-doc names."""
-    merged = {t: dict(m) for t, m in load_aliases(source_client).items() if isinstance(m, dict)}
-    for table, names in docs_store.doc_aliases(conn, source_client).items():
-        merged.setdefault(table, {}).update(names)
-    return merged
+    return docs_store.display_aliases(conn, source_client)
 
 
 def _filter(label: str, options: list[str], default: str = ALL):
@@ -217,8 +222,9 @@ def main() -> None:
     with st.sidebar.expander(f"ℹ️ About {APP_NAME}"):
         st.markdown(ABOUT_MD)
 
-    tab_overview, tab_upload, tab_triage, tab_docs, tab_rel, tab_scores = st.tabs(
-        ["📋 Overview", "⬆️ New audit", "🧾 Triage", "📘 Schema review", "🔗 Relationships", "📊 Scores & trend"]
+    tab_overview, tab_upload, tab_triage, tab_rules, tab_docs, tab_rel, tab_scores = st.tabs(
+        ["📋 Overview", "⬆️ New audit", "🧾 Triage", "📏 Rules", "📘 Schema review",
+         "🔗 Relationships", "📊 Scores & trend"]
     )
 
     with tab_overview:
@@ -250,8 +256,12 @@ def main() -> None:
                 help="Downloads the currently filtered issues (with triage status).",
             )
             _render_bulk_actions(conn, [i["id"] for i in issues])
+        rules_by_id = {r["id"]: r for r in repository.fetch_rules(conn, uid)}
         for issue in issues:
-            _render_issue_card(conn, issue, aliases)
+            _render_issue_card(conn, issue, aliases, rules_by_id.get(issue.get("rule_ref")))
+
+    with tab_rules:
+        _render_rules(conn, upload)
 
     with tab_docs:
         _render_schema_review(conn, upload)
@@ -270,6 +280,83 @@ CONFIDENCE_STYLE = {
     "VERIFIED": ("✅", "green", "Verified"),
 }
 DOC_VIEWS = {"All": None, "Needs review": "LOW", "Drafts": "draft", "Verified": "VERIFIED"}
+
+
+RULE_VIEWS = {"Found problems": "violated", "Passed": "passed", "All": "all"}
+EVIDENCE_LABEL = {
+    "null_pct": "blank %", "null_count": "blank rows", "row_count": "rows",
+    "negative_count": "negative rows", "negative_pct": "negative %", "min": "smallest value",
+    "duplicate_rows": "duplicate rows", "distinct_pct": "distinct %", "distinct_count": "distinct values",
+    "non_null_count": "filled rows", "duplicated_values": "repeated values",
+    "max_date": "latest date", "conformance_pct": "held in %", "valid_pairs": "rows compared",
+    "informative_rows": "rows compared", "overlap_pct": "matching %", "orphan_count": "unmatched rows",
+}
+EVIDENCE_HIDDEN = {"type", "reference_date"}
+
+
+def _evidence_text(rule: dict) -> str:
+    ev = rule.get("evidence") or {}
+    bits = []
+    for key, value in ev.items():
+        if key in EVIDENCE_HIDDEN or value is None:
+            continue
+        shown = f"{value:,}" if isinstance(value, int) and not isinstance(value, bool) else value
+        bits.append(f"{EVIDENCE_LABEL.get(key, key.replace('_', ' '))}: {shown}")
+    return "Evidence — " + " · ".join(bits) if bits else "Evidence — none recorded"
+
+
+def _render_rules(conn, upload: dict) -> None:
+    uid = upload["id"]
+    st.markdown("#### Rules — what was checked")
+    st.caption(
+        "Every rule below was created automatically from this upload's data profile; "
+        "none were written by hand. Each one says what it checks and why it was created."
+    )
+    all_rules = repository.fetch_rules(conn, uid)
+    if not all_rules:
+        st.info("No rules were recorded for this upload. Rules are saved for audits run from now on — "
+                "re-run the audit in ⬆️ New audit to see them.")
+        return
+
+    violated = sum(1 for r in all_rules if r["violation_count"])
+    m = st.columns(4)
+    m[0].metric("Rules checked", len(all_rules))
+    m[1].metric("✅ Passed", len(all_rules) - violated)
+    m[2].metric("⚠️ Found problems", violated)
+    m[3].metric("Tables covered", len({r["table_name"] for r in all_rules}))
+
+    f1, f2, f3 = st.columns([1.2, 1.2, 2])
+    tables = sorted({r["table_name"] for r in all_rules})
+    categories = sorted({r["category"] for r in all_rules})
+    table = f1.selectbox("Table", [ALL, *tables], key=f"rules_table_{uid}")
+    category = f2.selectbox("Rule type", [ALL, *categories], key=f"rules_cat_{uid}",
+                            format_func=lambda c: CATEGORY_LABEL.get(c, c))
+    with f3:
+        view = st.segmented_control("Show", list(RULE_VIEWS), default="Found problems", key=f"rules_view_{uid}")
+    mode = RULE_VIEWS.get(view or "All")
+
+    rules = [
+        r for r in all_rules
+        if (table == ALL or r["table_name"] == table)
+        and (category == ALL or r["category"] == category)
+        and (mode == "all" or (mode == "violated") == bool(r["violation_count"]))
+    ]
+    st.caption(f"Showing {len(rules)} of {len(all_rules)} rules")
+    for r in rules:
+        broken = r["violation_count"]
+        accent = "#d92d20" if broken else "#16a34a"
+        badge = (_pill(f"⚠ {broken:,} row(s) break this rule", "#d92d20") if broken
+                 else _pill("✓ Passed", "#16a34a"))
+        st.markdown(
+            f'''<div class="rule-card" style="--accent:{accent}">
+  <div class="issue-head"><span class="pills">{_outline_pill(CATEGORY_LABEL.get(r["category"], r["category"]))}{_outline_pill(r["table_name"])}</span>
+  <span class="pills">{badge}</span></div>
+  <div class="rule-what">{html.escape(r["what_text"])}</div>
+  <div class="rule-why">{html.escape(r["why_text"])}</div>
+  <div class="rule-ev">{html.escape(_evidence_text(r))}</div>
+</div>''',
+            unsafe_allow_html=True,
+        )
 
 
 def _render_schema_review(conn, upload: dict) -> None:
@@ -761,7 +848,7 @@ def _render_bulk_actions(conn, issue_ids: list[int]) -> None:
         st.caption("Applies to the current filtered view. Reversible — re-filter and reset any time.")
 
 
-def _render_issue_card(conn, issue: dict, aliases: dict | None = None) -> None:
+def _render_issue_card(conn, issue: dict, aliases: dict | None = None, rule: dict | None = None) -> None:
     severity = issue["severity"]
     sev_color = SEVERITY_COLOR.get(severity, "#667085")
     src_label, src_color = SOURCE_STYLE.get(issue["source"], (issue["source"].upper(), "#667085"))
@@ -811,6 +898,12 @@ def _render_issue_card(conn, issue: dict, aliases: dict | None = None) -> None:
                     row[display_columns(aliases or {}, table, col)] = val
                 preview.append(row)
             st.dataframe(preview, width="stretch", hide_index=True)
+
+    if rule:
+        with st.expander("📏 Why was this flagged?"):
+            st.markdown(f"**{rule['what_text']}**")
+            st.markdown(rule["why_text"])
+            st.caption(_evidence_text(rule) + " · rule derived automatically from the data profile")
 
     b1, b2, b3, spacer = st.columns([1, 1, 1, 5])
     if b1.button("✅ Accept", key=f"acc_{issue['id']}", width="stretch"):

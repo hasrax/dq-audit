@@ -91,7 +91,7 @@ python -m app.db.persist data/hemas --llm      # run from backend/, or set PYTHO
 # verified docs are added to later LLM audits). Skips already-documented tables.
 python -m app.schema_docs.generate data/hemas --client=hemas [--regenerate]
 
-# the tool (Overview / Upload / Triage / Schema review / Relationships / Scores)
+# the tool (Overview / Upload / Triage / Rules / Schema review / Relationships / Scores)
 streamlit run dashboard/app.py
 
 # HTTP API (health, uploads, issues, score, triage)

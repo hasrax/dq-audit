@@ -94,13 +94,43 @@ def save_relationships(conn: psycopg.Connection, upload_id: int, relationships: 
     return len(rows)
 
 
-def save_issues(conn: psycopg.Connection, upload_id: int, issues: list[dict]) -> int:
+def save_rules(
+    conn: psycopg.Connection, upload_id: int, source_client: str,
+    rules: list[dict], aliases: dict | None = None,
+) -> dict[str, int]:
+    """Persist an upload's rule instances with their plain-language
+    what/why text; returns {rule_key: rules.id} for linking issues."""
+    from app.rules.describe import describe_rule
+
+    ids: dict[str, int] = {}
+    with conn.cursor() as cur:
+        for r in rules:
+            what, why = describe_rule(r, aliases)
+            row = cur.execute(
+                "INSERT INTO rules (upload_id, source_client, rule_key, template, category, "
+                "table_name, column_name, parameters, what_text, why_text, evidence, violation_count) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (upload_id, source_client, r["rule_key"], r["template"], r["category"],
+                 r["table_name"], r["column_name"], json.dumps(r["parameters"], default=str),
+                 what, why, json.dumps(r["evidence"], default=str), r["violation_count"]),
+            ).fetchone()
+            ids[r["rule_key"]] = row[0]
+    conn.commit()
+    return ids
+
+
+def save_issues(
+    conn: psycopg.Connection, upload_id: int, issues: list[dict],
+    rule_ids: dict[str, int] | None = None,
+) -> int:
+    rule_ids = rule_ids or {}
     rows = [
         (
             upload_id, i["table_name"], i.get("column_name"), i["dimension"],
             i["source"], i["error_type"], i["severity"], i.get("description"),
             i.get("recommendation"), i.get("fixable"), i.get("status", "flagged"),
             json.dumps(i.get("row_reference")), i.get("rule_id"),
+            rule_ids.get(i.get("rule_key")),
         )
         for i in issues
     ]
@@ -108,12 +138,38 @@ def save_issues(conn: psycopg.Connection, upload_id: int, issues: list[dict]) ->
         cur.executemany(
             "INSERT INTO issues (upload_id, table_name, column_name, dimension, "
             "source, error_type, severity, description, recommendation, fixable, "
-            "status, row_reference, rule_id) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "status, row_reference, rule_id, rule_ref) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             rows,
         )
     conn.commit()
     return len(rows)
+
+
+def fetch_rules(
+    conn: psycopg.Connection, upload_id: int,
+    table_name: str | None = None, category: str | None = None,
+    violated_only: bool = False,
+) -> list[dict]:
+    """An upload's rules, most violations first."""
+    clauses, params = ["upload_id = %s"], [upload_id]
+    for column, value in (("table_name", table_name), ("category", category)):
+        if value is not None:
+            clauses.append(f"{column} = %s")
+            params.append(value)
+    if violated_only:
+        clauses.append("violation_count > 0")
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute(
+            "SELECT * FROM rules WHERE " + " AND ".join(clauses) +
+            " ORDER BY violation_count DESC, table_name, category, id",
+            params,
+        ).fetchall()
+
+
+def fetch_rule(conn: psycopg.Connection, rule_id: int) -> dict | None:
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute("SELECT * FROM rules WHERE id = %s", (rule_id,)).fetchone()
 
 
 def list_uploads(conn: psycopg.Connection) -> list[dict]:

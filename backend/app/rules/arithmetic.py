@@ -36,6 +36,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from app.rules.registry import record_rule
+
 RULE_ID = "consistency_arithmetic_violation"
 MAX_SAMPLE_ROWS = 5
 MIN_CONFORMANCE = 0.95
@@ -56,6 +58,7 @@ def mine_arithmetic(
     min_distinct: int = MIN_DISTINCT,
     tol_abs: float = TOL_ABS,
     tol_rel: float = TOL_REL,
+    include_clean: bool = False,
 ) -> list[dict]:
     """Discover (a, b, c) triples where a * b ~= c for most rows.
 
@@ -100,7 +103,7 @@ def mine_arithmetic(
 
                 violation_mask = informative & (diff > tol)
                 violation_count = int(violation_mask.sum())
-                if violation_count == 0:
+                if violation_count == 0 and not include_clean:
                     continue
 
                 discovered.append(
@@ -122,9 +125,21 @@ def check_arithmetic(
     df: pd.DataFrame,
     types: dict[str, str],
     distinct_counts: dict[str, int] | None = None,
+    rules: list[dict] | None = None,
 ) -> list[dict]:
     issues = []
-    for rel in mine_arithmetic(df, types, distinct_counts=distinct_counts):
+    for rel in mine_arithmetic(df, types, distinct_counts=distinct_counts, include_clean=rules is not None):
+        key = record_rule(
+            rules, RULE_ID, "consistency", table_name,
+            f"{rel['factor_a']},{rel['factor_b']},{rel['product_c']}",
+            parameters={"tolerance_abs": TOL_ABS, "tolerance_rel": TOL_REL,
+                        "min_conformance": MIN_CONFORMANCE},
+            evidence={"conformance_pct": round(rel["conformance"] * 100, 4),
+                      "informative_rows": rel["informative_rows"]},
+            violation_count=rel["violation_count"],
+        )
+        if rel["violation_count"] == 0:
+            continue
         issues.append(
             {
                 "table_name": table_name,
@@ -149,6 +164,7 @@ def check_arithmetic(
                     "sample_rows": rel["sample_rows"],
                 },
                 "rule_id": RULE_ID,
+                "rule_key": key,
             }
         )
     return issues

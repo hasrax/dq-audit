@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from app.rules.registry import record_rule
+
 RULE_ID = "validity_negative_value"
 MAX_SAMPLE_ROWS = 5
 NUMERIC_TYPES = ("int", "decimal")
@@ -27,13 +29,19 @@ def _severity(negative_pct: float) -> str:
     return "low"
 
 
-def check_validity(table_name: str, df: pd.DataFrame, profile: dict) -> list[dict]:
+def check_validity(table_name: str, df: pd.DataFrame, profile: dict, rules: list[dict] | None = None) -> list[dict]:
     issues = []
 
     for col, col_stats in profile["columns"].items():
         if col_stats["type"] not in NUMERIC_TYPES:
             continue
         if col_stats["min"] is None or col_stats["min"] >= 0:
+            record_rule(
+                rules, RULE_ID, "validity", table_name, col,
+                parameters={"min_allowed": 0},
+                evidence={"type": col_stats["type"], "min": col_stats["min"], "negative_count": 0},
+                violation_count=0,
+            )
             continue
 
         numeric = pd.to_numeric(df[col], errors="coerce")
@@ -41,6 +49,13 @@ def check_validity(table_name: str, df: pd.DataFrame, profile: dict) -> list[dic
         negative_count = int(negative_mask.sum())
         negative_pct = round(negative_count / profile["row_count"] * 100, 2)
         sample_rows = df.index[negative_mask][:MAX_SAMPLE_ROWS].tolist()
+        key = record_rule(
+            rules, RULE_ID, "validity", table_name, col,
+            parameters={"min_allowed": 0},
+            evidence={"type": col_stats["type"], "min": col_stats["min"],
+                      "negative_count": negative_count, "negative_pct": negative_pct},
+            violation_count=negative_count,
+        )
 
         issues.append(
             {
@@ -63,6 +78,7 @@ def check_validity(table_name: str, df: pd.DataFrame, profile: dict) -> list[dic
                     "sample_rows": sample_rows,
                 },
                 "rule_id": RULE_ID,
+                "rule_key": key,
             }
         )
     return issues

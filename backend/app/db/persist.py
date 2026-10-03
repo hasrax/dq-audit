@@ -20,6 +20,7 @@ from pathlib import Path
 from app.config import Settings
 from app.db import repository
 from app.rules.engine import run_rules
+from app.schema_docs.store import display_aliases
 
 
 def persist_audit(
@@ -44,7 +45,11 @@ def persist_audit(
         )
         n_profiles = repository.save_profiles(conn, upload_id, profiles)
         n_rels = repository.save_relationships(conn, upload_id, relationships)
-        n_issues = repository.save_issues(conn, upload_id, all_issues)
+        rule_ids = repository.save_rules(
+            conn, upload_id, result["source_client"], result["rules"],
+            aliases=display_aliases(conn, result["source_client"]),
+        )
+        n_issues = repository.save_issues(conn, upload_id, all_issues, rule_ids=rule_ids)
         score = repository.score_upload(conn, upload_id)
     finally:
         conn.close()
@@ -53,6 +58,8 @@ def persist_audit(
         "upload_id": upload_id,
         "profiles": n_profiles,
         "relationships": n_rels,
+        "rules": len(rule_ids),
+        "rules_violated": sum(1 for r in result["rules"] if r["violation_count"]),
         "issues": n_issues,
         "rule_issues": len(result["issues"]),
         "llm_issues": len(llm_issues or []),
@@ -78,6 +85,7 @@ def main(argv: list[str] | None = None) -> None:
     print(
         f"upload #{result['upload_id']}: "
         f"{result['profiles']} profile rows, {result['relationships']} relationships, "
+        f"{result['rules']} rules ({result['rules_violated']} violated), "
         f"{result['issues']} issues "
         f"({result['rule_issues']} rule + {result['llm_issues']} llm) "
         f"· DQ score {result['overall_score']}/100"

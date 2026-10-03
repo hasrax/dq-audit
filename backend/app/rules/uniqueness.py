@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from app.rules.registry import record_rule
+
 FULL_ROW_RULE_ID = "uniqueness_full_row_duplicate"
 NEAR_KEY_RULE_ID = "uniqueness_near_key_duplicate"
 MAX_SAMPLE_ROWS = 5
@@ -23,12 +25,18 @@ def check_uniqueness(
     df: pd.DataFrame,
     profile: dict,
     near_unique_threshold: float = NEAR_UNIQUE_THRESHOLD,
+    rules: list[dict] | None = None,
 ) -> list[dict]:
     issues = []
     row_count = profile["row_count"]
 
     dup_mask = df.duplicated(keep=False)
     dup_count = int(dup_mask.sum())
+    full_key = record_rule(
+        rules, FULL_ROW_RULE_ID, "uniqueness", table_name, None,
+        parameters={}, evidence={"row_count": row_count, "duplicate_rows": dup_count},
+        violation_count=dup_count,
+    )
     if dup_count > 0:
         sample_rows = df.index[dup_mask][:MAX_SAMPLE_ROWS].tolist()
         issues.append(
@@ -45,6 +53,7 @@ def check_uniqueness(
                 "status": "flagged",
                 "row_reference": {"count": dup_count, "sample_rows": sample_rows},
                 "rule_id": FULL_ROW_RULE_ID,
+                "rule_key": full_key,
             }
         )
 
@@ -53,13 +62,24 @@ def check_uniqueness(
         if non_null_count == 0:
             continue
         ratio = stats["distinct_count"] / non_null_count
-        if not (near_unique_threshold <= ratio < 1.0):
+        if ratio < near_unique_threshold or non_null_count < 2:
+            continue
+        evidence = {"distinct_count": stats["distinct_count"], "non_null_count": non_null_count,
+                    "distinct_pct": round(ratio * 100, 2)}
+        if ratio >= 1.0:  # already unique: the rule holds, nothing to flag
+            record_rule(rules, NEAR_KEY_RULE_ID, "uniqueness", table_name, col,
+                        parameters={"min_distinct_ratio": near_unique_threshold},
+                        evidence=evidence, violation_count=0)
             continue
 
         value_counts = df[col].dropna().value_counts()
         dup_values = value_counts[value_counts > 1]
         dup_row_count = int(dup_values.sum())
         sample_rows = df.index[df[col].isin(dup_values.index)][:MAX_SAMPLE_ROWS].tolist()
+        key = record_rule(rules, NEAR_KEY_RULE_ID, "uniqueness", table_name, col,
+                          parameters={"min_distinct_ratio": near_unique_threshold},
+                          evidence={**evidence, "duplicated_values": len(dup_values)},
+                          violation_count=dup_row_count)
 
         issues.append(
             {
@@ -79,6 +99,7 @@ def check_uniqueness(
                 "status": "flagged",
                 "row_reference": {"count": dup_row_count, "sample_rows": sample_rows},
                 "rule_id": NEAR_KEY_RULE_ID,
+                "rule_key": key,
             }
         )
     return issues

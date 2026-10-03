@@ -193,6 +193,16 @@ def doc_aliases(conn: psycopg.Connection, source_client: str) -> dict[str, dict[
     return out
 
 
+def display_aliases(conn: psycopg.Connection, source_client: str) -> dict[str, dict[str, str]]:
+    """Column display names: config/aliases overlaid with verified schema-doc names."""
+    from app.aliases import load_aliases
+
+    merged = {t: dict(m) for t, m in load_aliases(source_client).items() if isinstance(m, dict)}
+    for table, names in doc_aliases(conn, source_client).items():
+        merged.setdefault(table, {}).update(names)
+    return merged
+
+
 def build_schema_context(table_name: str, table_doc: dict | None, columns: list[dict]) -> str:
     """Compact text block from verified docs only; "" if nothing verified."""
     verified = [c for c in columns if c["confidence"] == "VERIFIED"]

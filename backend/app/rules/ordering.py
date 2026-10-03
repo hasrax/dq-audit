@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from app.rules.registry import record_rule
+
 RULE_ID = "consistency_ordering_violation"
 MAX_SAMPLE_ROWS = 5
 MIN_CONFORMANCE = 0.98
@@ -47,8 +49,12 @@ def mine_orderings(
     min_conformance: float = MIN_CONFORMANCE,
     min_valid_pairs: int = MIN_VALID_PAIRS,
     min_distinct: int = MIN_DISTINCT,
+    include_clean: bool = False,
 ) -> list[dict]:
     """Discover (lo, hi) column pairs where lo <= hi holds for most rows.
+
+    include_clean also returns pairs that hold for every row (zero
+    violations) -- they are checked rules too, just ones that passed.
 
     distinct_counts (from the Layer 0 profile) filters out low-
     cardinality status/flag columns: two small integer codes with only
@@ -83,17 +89,18 @@ def mine_orderings(
                 a_le_b = (sa[valid] <= sb[valid]).mean()
                 b_le_a = (sb[valid] <= sa[valid]).mean()
                 lo, hi, conformance = (a, b, a_le_b) if a_le_b >= b_le_a else (b, a, b_le_a)
-                if not (min_conformance <= conformance < 1.0):
+                if conformance < min_conformance or (conformance >= 1.0 and not include_clean):
                     continue
 
                 s_lo, s_hi = parsed[lo], parsed[hi]
                 violation_mask = valid & (s_lo > s_hi)
                 violation_count = int(violation_mask.sum())
-                if violation_count == 0:
+                if violation_count == 0 and not include_clean:
                     continue
 
                 discovered.append(
                     {
+                        "is_date": is_date,
                         "column_lo": lo,
                         "column_hi": hi,
                         "conformance": round(conformance, 6),
@@ -111,9 +118,21 @@ def check_ordering(
     types: dict[str, str],
     distinct_counts: dict[str, int] | None = None,
     exclude_columns: set[str] | None = None,
+    rules: list[dict] | None = None,
 ) -> list[dict]:
     issues = []
-    for rel in mine_orderings(df, types, distinct_counts=distinct_counts, exclude_columns=exclude_columns):
+    mined = mine_orderings(df, types, distinct_counts=distinct_counts,
+                           exclude_columns=exclude_columns, include_clean=rules is not None)
+    for rel in mined:
+        key = record_rule(
+            rules, RULE_ID, "consistency", table_name, f"{rel['column_lo']},{rel['column_hi']}",
+            parameters={"is_date": rel["is_date"], "min_conformance": MIN_CONFORMANCE},
+            evidence={"conformance_pct": round(rel["conformance"] * 100, 4),
+                      "valid_pairs": rel["valid_pairs"]},
+            violation_count=rel["violation_count"],
+        )
+        if rel["violation_count"] == 0:
+            continue
         issues.append(
             {
                 "table_name": table_name,
@@ -135,6 +154,7 @@ def check_ordering(
                     "sample_rows": rel["sample_rows"],
                 },
                 "rule_id": RULE_ID,
+                "rule_key": key,
             }
         )
     return issues

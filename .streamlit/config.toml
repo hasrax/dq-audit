@@ -1,0 +1,26 @@
+# Calm, readable theme for non-technical SME staff (accountants,
+# storekeepers, data-entry operators, managers). Blue rather than
+# Streamlit's default red, so ordinary actions don't read as alarms;
+# colours chosen for WCAG AA contrast on white.
+
+[theme]
+base = "light"
+primaryColor = "#1F5FAD"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F6F9"
+textColor = "#1D2939"
+linkColor = "#1F5FAD"
+borderColor = "#E4E7EC"
+font = "sans-serif"
+baseFontSize = 15
+baseRadius = "medium"
+showWidgetBorder = true
+
+[theme.sidebar]
+backgroundColor = "#F4F6F9"
+
+[client]
+toolbarMode = "viewer"
+
+[browser]
+gatherUsageStats = false

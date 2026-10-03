@@ -42,7 +42,7 @@ def test_app_renders_triage_controls_when_issues_exist():
 
     at = _app()
     # sidebar has the audit-run selector and the status filter
-    assert len(at.sidebar.selectbox) >= 2
+    assert len(at.sidebar.selectbox) >= 1  # audit run (filters now live in Triage)
     # if the selected run has flagged issues, accept/reject/consider buttons render
     conn = repository.connect()
     uploads = repository.list_uploads(conn)
@@ -90,5 +90,6 @@ def test_reviewer_does_not_get_admin_tabs():
     at = _app({"id": 0, "username": "pytest-reviewer", "role": "reviewer"})
     assert not at.exception
     labels = [t.label for t in at.tabs]
-    assert "🧾 Triage" in labels and "💬 Ask" in labels
-    assert not {"⬆️ New audit", "📘 Schema review", "🏢 Organisation", "⚙️ Settings"} & set(labels)
+    assert any(l.endswith("Triage") for l in labels) and any(l.endswith("Ask") for l in labels)
+    admin_only = ("New audit", "Schema review", "Organisation", "Settings")
+    assert not [l for l in labels if l.endswith(admin_only)]

@@ -159,7 +159,8 @@ def histories_for_upload(conn: psycopg.Connection, upload_id: int) -> dict[int, 
             "  UNION ALL"
             "  SELECT c.root, i.id, i.previous_issue_id, i.upload_id, i.affected_row_count, c.depth + 1"
             "  FROM issues i JOIN chain c ON i.id = c.previous_issue_id"
-            ") SELECT c.root, c.affected_row_count, COALESCE(u.data_as_of, u.upload_date::date) AS as_of "
+            ") SELECT c.root, c.upload_id, c.affected_row_count, "
+            "COALESCE(u.data_as_of, u.upload_date::date) AS as_of "
             "FROM chain c JOIN uploads u ON u.id = c.upload_id ORDER BY c.root, c.depth DESC",
             (upload_id,),
         ).fetchall()

@@ -77,14 +77,16 @@ become the ground truth that measures the tool's own precision.
 DIMENSIONS = ["completeness", "validity", "consistency", "uniqueness", "timeliness", "cross_table", "accuracy"]
 STATUSES = ["flagged", "accepted", "rejected", "considered"]
 STATUS_LABEL = {"flagged": "⚪ Flagged", "accepted": "✅ Accepted", "rejected": "❌ Rejected", "considered": "🤔 Considered"}
-SEVERITY_COLOR = {"high": "#d92d20", "medium": "#dd6b20", "low": "#667085"}
-SOURCE_STYLE = {"rule": ("⚙️ RULE · Type 1", "#2563eb"), "llm": ("🤖 LLM · Type 2", "#7c3aed")}
+# Pill colours all reach >= 4.5:1 contrast with white text (WCAG AA).
+SEVERITY_COLOR = {"high": "#B42318", "medium": "#B54708", "low": "#475467"}
+SOURCE_STYLE = {"rule": ("Rule · Type 1", "#1D4ED8"), "llm": ("AI · Type 2", "#6941C6")}
+GOOD, BAD, NEUTRAL, MUTED = "#067647", "#B42318", "#475467", "#475467"
 ALL = "(all)"
 TREND_STYLE = {
-    "new": ("NEW", "#2563eb"),
-    "worsening": ("▲ WORSENING", "#d92d20"),
-    "improving": ("▼ IMPROVING", "#16a34a"),
-    "stable": ("■ STABLE", "#667085"),
+    "new": ("NEW", "#1F5FAD"),
+    "worsening": ("▲ WORSENING", "#B42318"),
+    "improving": ("▼ IMPROVING", "#067647"),
+    "stable": ("■ STABLE", "#475467"),
 }
 TRENDS = ["new", "recurring", "worsening", "improving", "stable"]
 
@@ -92,40 +94,45 @@ CSS = """
 <style>
 .issue-card {
   border: 1px solid rgba(128,128,128,0.25);
-  border-left: 6px solid var(--sev, #667085);
+  border-left: 5px solid var(--sev, #475467);
   border-radius: 10px;
   padding: 14px 18px 12px 18px;
-  margin: 2px 0 6px 0;
-  background: var(--tint, rgba(128,128,128,0.03));
+  margin: 4px 0 6px 0;
+  background: #FFFFFF;
+  box-shadow: 0 1px 2px rgba(16,24,40,0.04);
 }
 .issue-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
-.issue-title { font-size: 1.06rem; font-weight: 700; letter-spacing:0.2px; }
-.issue-desc { margin-top: 8px; font-size: 0.96rem; line-height: 1.45; }
-.issue-rec  { margin-top: 6px; font-size: 0.88rem; opacity: 0.75; font-style: italic; }
-.issue-meta { margin-top: 8px; font-size: 0.78rem; opacity: 0.65; }
-.issue-trend { margin-top: 8px; font-size: 0.84rem; line-height: 1.5; }
-.issue-trend .est { opacity: 0.7; font-style: italic; }
+.issue-title { font-size: 1.06rem; font-weight: 700; color: #101828; }
+.issue-title .col { font-weight: 500; color: #475467; }
+.issue-desc { margin-top: 8px; font-size: 1rem; line-height: 1.5; color: #1D2939; }
+.issue-rec  { margin-top: 8px; font-size: 0.93rem; line-height: 1.45; color: #344054;
+              background: #F4F6F9; border-radius: 6px; padding: 6px 10px; }
+.issue-meta { margin-top: 8px; font-size: 0.82rem; color: #475467; }
+.issue-trend { margin-top: 8px; font-size: 0.88rem; line-height: 1.5; color: #344054; }
+.issue-trend .est { color: #475467; font-style: italic; }
 .rule-card {
-  border: 1px solid rgba(128,128,128,0.25);
-  border-left: 6px solid var(--accent, #16a34a);
-  border-radius: 10px; padding: 12px 16px 10px 16px; margin: 0 0 10px 0;
+  border: 1px solid #E4E7EC;
+  border-left: 5px solid var(--accent, #067647);
+  border-radius: 10px; padding: 12px 16px 10px 16px; margin: 0 0 4px 0; background: #FFFFFF;
 }
-.rule-what { font-size: 1.0rem; font-weight: 650; line-height: 1.4; margin-top: 6px; }
-.rule-why  { margin-top: 4px; font-size: 0.9rem; line-height: 1.45; opacity: 0.8; }
-.rule-ev   { margin-top: 6px; font-size: 0.76rem; opacity: 0.6; }
+.rule-what { font-size: 1.0rem; font-weight: 650; line-height: 1.45; margin-top: 6px; color: #101828; }
+.rule-why  { margin-top: 4px; font-size: 0.93rem; line-height: 1.5; color: #344054; }
+.rule-ev   { margin-top: 6px; font-size: 0.8rem; color: #475467; }
 .pills { display:flex; gap:6px; flex-wrap:wrap; }
 .pill {
   display:inline-block; padding: 2px 10px; border-radius: 999px;
-  font-size: 0.72rem; font-weight: 700; color: #fff; white-space: nowrap;
+  font-size: 0.75rem; font-weight: 700; color: #fff; white-space: nowrap; letter-spacing: 0.2px;
 }
 .pill-outline {
-  background: transparent; color: var(--fg, inherit);
-  border: 1px solid rgba(128,128,128,0.45); font-weight: 600;
+  background: #FFFFFF; color: #344054;
+  border: 1px solid #D0D5DD; font-weight: 600;
 }
+.context-line { font-size: 0.92rem; color: #475467; margin: -4px 0 6px 0; }
+.context-line b { color: #101828; }
 .hero { text-align:center; padding: 8px 0 6px 0; }
 .hero-num { font-size: 4.2rem; font-weight: 800; line-height: 1; }
-.hero-max { font-size: 1.4rem; font-weight: 600; opacity: 0.5; }
-.hero-label { font-size: 0.9rem; opacity: 0.7; letter-spacing: 0.4px; text-transform: uppercase; }
+.hero-max { font-size: 1.4rem; font-weight: 600; color: #667085; }
+.hero-label { font-size: 0.9rem; color: #475467; letter-spacing: 0.4px; text-transform: uppercase; }
 .meter { margin: 10px 0; }
 .meter-top { display:flex; justify-content:space-between; font-size:0.9rem; margin-bottom:4px; }
 .meter-label { font-weight:600; }
@@ -157,10 +164,10 @@ DIMENSION_ROWS = [
 
 def _status_color(value: float) -> str:
     if value >= SCORE_GOOD:
-        return "#16a34a"
+        return GOOD
     if value >= SCORE_WARN:
-        return "#d97706"
-    return "#dc2626"
+        return "#B54708"
+    return BAD
 
 
 @st.cache_resource
@@ -175,11 +182,6 @@ def get_conn():
 
 def _aliases(conn, source_client: str) -> dict:
     return docs_store.display_aliases(conn, source_client)
-
-
-def _filter(label: str, options: list[str], default: str = ALL):
-    choices = [ALL, *options]
-    return st.sidebar.selectbox(label, choices, index=choices.index(default))
 
 
 def _none_if_all(value: str) -> str | None:
@@ -277,16 +279,6 @@ def main() -> None:
     upload = upload_labels[chosen]
     uid = upload["id"]
 
-    st.sidebar.markdown("### Filters")
-    filters = {
-        "source": _filter("Source", ["rule", "llm"]),
-        "dimension": _filter("Dimension", DIMENSIONS),
-        "severity": _filter("Severity", ["high", "medium", "low"]),
-        "status": _filter("Status", STATUSES, default="flagged"),
-        "fixable": _filter("Fixable", ["yes", "no"]),
-        "trend": _filter("Trend", TRENDS),
-    }
-
     counts = repository.triage_counts(conn, uid)
     total = upload["issue_count"]
     reviewed = sum(counts.get(s, 0) for s in ("accepted", "rejected", "considered"))
@@ -306,27 +298,51 @@ def main() -> None:
 
     # Reviewer: triage, chat, export (+ read-only views). Admin: everything.
     pages = [
-        ("📋 Overview", lambda: _render_overview(conn, upload)),
-        ("🧾 Triage", lambda: _render_triage(conn, upload, filters)),
-        ("💬 Ask", lambda: _render_chat(conn, upload)),
-        ("📏 Rules", lambda: _render_rules(conn, upload)),
-        ("📊 Scores & trend", lambda: _render_scores(conn, upload)),
-        ("🔗 Relationships", lambda: _render_relationships(conn, upload)),
+        (":material/dashboard: Overview", lambda: _render_overview(conn, upload)),
+        (":material/fact_check: Triage", lambda: _render_triage(conn, upload)),
+        (":material/forum: Ask", lambda: _render_chat(conn, upload)),
+        (":material/rule: Rules", lambda: _render_rules(conn, upload)),
+        (":material/monitoring: Scores & trend", lambda: _render_scores(conn, upload)),
+        (":material/account_tree: Relationships", lambda: _render_relationships(conn, upload)),
     ]
     if admin:
-        pages[1:1] = [("⬆️ New audit", lambda: _render_upload(conn))]
+        pages[1:1] = [(":material/upload_file: New audit", lambda: _render_upload(conn))]
         pages += [
-            ("📘 Schema review", lambda: _render_schema_review(conn, upload)),
-            ("🏢 Organisation", lambda: _render_organisation(conn, upload)),
-            ("⚙️ Settings", lambda: _render_settings(conn)),
+            (":material/menu_book: Schema review", lambda: _render_schema_review(conn, upload)),
+            (":material/domain: Organisation", lambda: _render_organisation(conn, upload)),
+            (":material/settings: Settings", lambda: _render_settings(conn)),
         ]
     for tab, (_, render) in zip(st.tabs([label for label, _ in pages]), pages):
         with tab:
             render()
 
 
-def _render_triage(conn, upload: dict, filters: dict) -> None:
+FILTER_LABELS = {"rule": "Rules", "llm": "AI", "flagged": "To review", "yes": "Yes", "no": "No"}
+
+
+def _filter_bar() -> dict:
+    cols = st.columns(6)
+    specs = [
+        ("source", "Found by", ["rule", "llm"], ALL),
+        ("status", "Status", STATUSES, "flagged"),
+        ("severity", "Severity", ["high", "medium", "low"], ALL),
+        ("dimension", "Dimension", DIMENSIONS, ALL),
+        ("trend", "Trend", TRENDS, ALL),
+        ("fixable", "Fixable", ["yes", "no"], ALL),
+    ]
+    filters = {}
+    for col, (key, label, options, default) in zip(cols, specs):
+        choices = [ALL, *options]
+        filters[key] = col.selectbox(
+            label, choices, index=choices.index(default), key=f"filter_{key}",
+            format_func=lambda v: "All" if v == ALL else FILTER_LABELS.get(v, v.replace("_", " ").capitalize()),
+        )
+    return filters
+
+
+def _render_triage(conn, upload: dict) -> None:
     uid = upload["id"]
+    filters = _filter_bar()
     issues = repository.fetch_issues(
         conn, uid,
         source=_none_if_all(filters["source"]),
@@ -342,7 +358,7 @@ def _render_triage(conn, upload: dict, filters: dict) -> None:
         issues = [i for i in issues if i.get("trend_status") == filters["trend"]]
     aliases = _aliases(conn, upload["source_client"])
     head_l, head_csv, head_xlsx = st.columns([3, 1, 1])
-    head_l.caption(f"Showing {len(issues)} issue(s) · filters are in the sidebar")
+    head_l.caption(f"Showing {len(issues)} issue(s)")
     if issues:
         org = client_label(upload["source_client"])
         stem = f"{org.replace(' ', '_').replace('·', '')}_audit{uid}_issues"
@@ -365,7 +381,7 @@ def _render_triage(conn, upload: dict, filters: dict) -> None:
         )
         _render_bulk_actions(conn, [i["id"] for i in issues])
     else:
-        st.info("No issues match these filters. Try setting **Status** to *(all)* in the sidebar.")
+        st.info("No issues match these filters. Try setting **Status** to *All*.")
     rules_by_id = {r["id"]: r for r in repository.fetch_rules(conn, uid)}
     histories = recurrence.histories_for_upload(conn, uid)
     projections = recurrence.projections_for_upload(conn, uid)
@@ -456,6 +472,7 @@ def _evidence_text(rule: dict) -> str:
     return "Evidence — " + " · ".join(bits) if bits else "Evidence — none recorded"
 
 
+GENERAL = 0  # selectbox sentinel: a None option would render as an empty placeholder
 GENERAL_STARTERS = [
     "What are the most serious problems in this audit?",
     "Which table should we fix first, and why?",
@@ -489,14 +506,15 @@ def _render_chat(conn, upload: dict) -> None:
     by_id = {i["id"]: i for i in issues}
     key = f"chat_issue_{uid}"
     if st.session_state.get(key) not in by_id:
-        st.session_state[key] = None
-    issue_id = st.selectbox(
+        st.session_state[key] = GENERAL
+    choice = st.selectbox(
         "Ask about",
-        [None, *by_id],
+        [GENERAL, *by_id],
         key=key,
-        format_func=lambda i: "🗂️ This audit in general" if i is None else _issue_option_label(by_id[i], aliases),
+        format_func=lambda i: "This audit in general" if i == GENERAL else _issue_option_label(by_id[i], aliases),
     )
-    issue = by_id.get(issue_id)
+    issue = by_id.get(choice)
+    issue_id = issue["id"] if issue else None
 
     turns = assistant.fetch_turns(conn, uid, issue_id, username)
     starters = ISSUE_STARTERS if issue else GENERAL_STARTERS
@@ -544,9 +562,10 @@ def _render_rules(conn, upload: dict) -> None:
     f1, f2, f3 = st.columns([1.2, 1.2, 2])
     tables = sorted({r["table_name"] for r in all_rules})
     categories = sorted({r["category"] for r in all_rules})
-    table = f1.selectbox("Table", [ALL, *tables], key=f"rules_table_{uid}")
+    table = f1.selectbox("Table", [ALL, *tables], key=f"rules_table_{uid}",
+                         format_func=lambda t: "All tables" if t == ALL else t)
     category = f2.selectbox("Rule type", [ALL, *categories], key=f"rules_cat_{uid}",
-                            format_func=lambda c: CATEGORY_LABEL.get(c, c))
+                            format_func=lambda c: "All types" if c == ALL else CATEGORY_LABEL.get(c, c))
     with f3:
         view = st.segmented_control("Show", list(RULE_VIEWS), default="Found problems", key=f"rules_view_{uid}")
     mode = RULE_VIEWS.get(view or "All")
@@ -564,14 +583,14 @@ def _render_rules(conn, upload: dict) -> None:
     for r in rules:
         broken = r["violation_count"]
         off = r["rule_key"] in suppressed
-        accent = "#98a2b3" if off else ("#d92d20" if broken else "#16a34a")
+        accent = "#98a2b3" if off else (BAD if broken else GOOD)
         if off:
             s_row = suppressed[r["rule_key"]]
             badge = _pill(f"Not applicable · {s_row['disabled_by'] or 'admin'}, {s_row['disabled_at']:%d %b}", "#667085")
         elif broken:
-            badge = _pill(f"⚠ {broken:,} row(s) break this rule", "#d92d20")
+            badge = _pill(f"⚠ {broken:,} row(s) break this rule", BAD)
         else:
-            badge = _pill("✓ Passed", "#16a34a")
+            badge = _pill("✓ Passed", GOOD)
         st.markdown(
             f'''<div class="rule-card" style="--accent:{accent}">
   <div class="issue-head"><span class="pills">{_outline_pill(CATEGORY_LABEL.get(r["category"], r["category"]))}{_outline_pill(r["table_name"])}</span>
@@ -584,7 +603,7 @@ def _render_rules(conn, upload: dict) -> None:
         )
         if admin and (broken or off):
             label = "↩️ Apply this rule again" if off else "🚫 Not applicable to us"
-            if st.button(label, key=f"suppress_{r['id']}",
+            if st.button(label, key=f"suppress_{r['id']}", type="tertiary",
                          help="Disabled rules still run but raise no issues in future audits for this organisation."):
                 repository.set_rule_suppressed(conn, client, r["rule_key"], not off, by=_username())
                 st.toast("Rule re-enabled for future audits" if off else
@@ -835,7 +854,7 @@ def _render_overview(conn, upload: dict) -> None:
     overall = score["overall_score"]
     color = _status_color(overall)
 
-    st.caption(f"Upload #{uid} — **{client_label(upload['source_client'])}** · {upload['row_count']:,} rows audited")
+    st.caption(f"{upload['row_count']:,} rows audited")
 
     top = st.columns([1.5, 1, 1, 1])
     top[0].markdown(
@@ -857,7 +876,7 @@ def _render_overview(conn, upload: dict) -> None:
     row[0].metric("🔴 High", sev.get("high", 0))
     row[1].metric("🟠 Medium", sev.get("medium", 0))
     row[2].metric("⚪ Low", sev.get("low", 0))
-    row[3].metric("⚙️ Rule / 🤖 LLM", f"{src.get('rule', 0)} / {src.get('llm', 0)}")
+    row[3].metric("⚙️ Rules / 🤖 AI", f"{src.get('rule', 0)} / {src.get('llm', 0)}")
 
     _render_recurrence_summary(conn, upload)
 
@@ -1174,9 +1193,12 @@ def _meter(label: str, value: float) -> str:
 
 
 def _render_header(upload: dict, counts: dict, total: int, reviewed: int) -> None:
-    st.caption(f"Upload #{upload['id']} — **{client_label(upload['source_client'])}** · {total} issues")
-    if total:
-        st.progress(reviewed / total, text=f"{reviewed} of {total} reviewed")
+    when = upload.get("data_as_of") or upload["upload_date"]
+    st.markdown(
+        f'<div class="context-line"><b>{html.escape(client_label(upload["source_client"]))}</b> · '
+        f'audit #{upload["id"]} · data as of {when:%d %b %Y} · {total} issues · {reviewed} reviewed</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _render_bulk_actions(conn, issue_ids: list[int]) -> None:
@@ -1198,11 +1220,18 @@ def _render_bulk_actions(conn, issue_ids: list[int]) -> None:
 def _trend_html(issue: dict, history: list[dict] | None, projection: dict | None) -> str:
     if not history or len(history) < 2:
         return ""
+    counts = [h["affected_row_count"] for h in history]
+    if len(set(counts)) == 1:
+        out = (f"📈 Seen in {len(history)} audits since {history[0]['as_of']:%d %b %Y} · "
+               f"unchanged at <b>{counts[0]:,}</b> rows")
+        return f'<div class="issue-trend">{out}</div>'
+    same_day = len({h["as_of"] for h in history}) < len(history)
     steps = " → ".join(
-        f"{h['as_of']:%d %b}: <b>{h['affected_row_count']:,}</b>" for h in history[-6:]
+        (f"#{h['upload_id']}" if same_day else f"{h['as_of']:%d %b}") + f": <b>{h['affected_row_count']:,}</b>"
+        for h in history[-6:]
     )
     out = f"📈 Seen in {len(history)} audits · {steps}"
-    if projection:
+    if projection and float(projection["slope"]) != 0:
         out += (f'<br><span class="est">Next audit, if the trend continues: about '
                 f'{float(projection["projected_value"]):,.0f} rows (estimate from a straight-line '
                 f'fit over {projection["n_points"]} audits)</span>')
@@ -1217,13 +1246,14 @@ def _render_issue_card(
     sev_color = SEVERITY_COLOR.get(severity, "#667085")
     src_label, src_color = SOURCE_STYLE.get(issue["source"], (issue["source"].upper(), "#667085"))
     col_display = display_columns(aliases or {}, issue["table_name"], issue["column_name"])
-    location = issue["table_name"] + (f".{col_display}" if col_display else "")
+    location = html.escape(issue["table_name"]) + (
+        f' <span class="col">· {html.escape(col_display)}</span>' if col_display else "")
 
     pills = _pill(severity.upper(), sev_color) + _pill(src_label, src_color) + _outline_pill(issue["dimension"])
     if issue.get("trend_status") in TREND_STYLE:
         pills = _pill(*TREND_STYLE[issue["trend_status"]]) + pills
     if issue.get("fixable") == "yes":
-        pills += _pill("✓ Fixable", "#16a34a")
+        pills += _pill("✓ Fixable", GOOD)
     elif issue.get("fixable") == "no":
         pills += _outline_pill("Not fixable")
     if issue["status"] != "flagged":
@@ -1243,7 +1273,7 @@ def _render_issue_card(
     st.markdown(
         f'''<div class="issue-card" style="--sev:{sev_color}; --tint:{tint}">
   <div class="issue-head">
-    <span class="issue-title">{html.escape(location)}</span>
+    <span class="issue-title">{location}</span>
     <span class="pills">{pills}</span>
   </div>
   <div class="issue-desc">{html.escape(issue["description"] or "")}</div>

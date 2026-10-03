@@ -17,7 +17,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from app.aliases import client_label
+from app.aliases import base_client, client_label
 from app.llm.client import LLMClient
 from app.llm.structured import complete_json
 from app.privacy.pseudonymize import classify_pii_columns, load_overrides, pseudonymize_profile
@@ -122,7 +122,7 @@ def document_directory(
     from app.schema_docs import store
 
     data_dir = Path(data_dir)
-    source_client = source_client or data_dir.name
+    source_client = base_client(source_client or data_dir.name)
     client = client or LLMClient()
     overrides = load_overrides(source_client)
 

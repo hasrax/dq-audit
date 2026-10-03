@@ -49,10 +49,13 @@ def apply_schema(conn: psycopg.Connection) -> list[str]:
     return applied
 
 
-def create_upload(conn: psycopg.Connection, filename: str, source_client: str, row_count: int) -> int:
+def create_upload(
+    conn: psycopg.Connection, filename: str, source_client: str, row_count: int, data_as_of=None,
+) -> int:
     row = conn.execute(
-        "INSERT INTO uploads (filename, source_client, row_count) VALUES (%s, %s, %s) RETURNING id",
-        (filename, source_client, row_count),
+        "INSERT INTO uploads (filename, source_client, row_count, data_as_of) "
+        "VALUES (%s, %s, %s, %s) RETURNING id",
+        (filename, source_client, row_count, data_as_of),
     ).fetchone()
     conn.commit()
     return row[0]

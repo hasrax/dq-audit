@@ -12,6 +12,8 @@ import json
 import psycopg
 from psycopg.rows import dict_row
 
+from app.aliases import base_client
+
 CONTEXT_HEADER = "VERIFIED SCHEMA DOCUMENTATION (confirmed by the business; use it to read the columns):"
 
 
@@ -182,6 +184,7 @@ def doc_stats(conn: psycopg.Connection, source_client: str) -> dict:
 
 def doc_aliases(conn: psycopg.Connection, source_client: str) -> dict[str, dict[str, str]]:
     """Verified display names as an alias overlay {table: {col: name}}."""
+    source_client = base_client(source_client)
     rows = conn.execute(
         "SELECT table_name, column_name, display_name FROM schema_doc_columns "
         "WHERE source_client = %s AND confidence = 'VERIFIED' AND display_name IS NOT NULL",
@@ -239,6 +242,7 @@ def get_schema_context(source_client: str | None, table_name: str, conn: psycopg
     """
     if not source_client:
         return ""
+    source_client = base_client(source_client)
     own_conn = conn is None
     try:
         if own_conn:

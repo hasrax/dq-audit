@@ -87,6 +87,16 @@ All commands run from the repo root with the venv's Python.
 # audit + persist + score a client's CSV/Excel directory (add --llm for Type 2)
 python -m app.db.persist data/hemas --llm      # run from backend/, or set PYTHONPATH=backend
 
+# recurring issues: every audit is matched to the client's previous one
+# (new / worsening / improving / stable + linear projection). To recompute
+# history for all existing uploads:
+python -m app.monitoring.recurrence --backfill
+
+# time-sliced replay of one real export (config/replay/<client>.json) to
+# demonstrate trends and measure projection error; snapshots go to the
+# git-ignored data/_replay/, source files are never touched
+python -m app.eval.replay data/hemas --client=hemas [--llm]
+
 # AI-drafted schema documentation (review + verify it in the Schema review tab;
 # verified docs are added to later LLM audits). Skips already-documented tables.
 python -m app.schema_docs.generate data/hemas --client=hemas [--regenerate]

@@ -107,9 +107,11 @@ def load_overrides(source_client: str | None, config_dir: Path | str | None = No
     Loaded automatically on every LLM path so a cloud call can never
     skip the overrides the heuristic depends on.
     """
+    from app.aliases import base_client
+
     if not source_client:
         return {}
-    path = Path(config_dir or PRIVACY_DIR) / f"{source_client}.json"
+    path = Path(config_dir or PRIVACY_DIR) / f"{base_client(source_client)}.json"
     if not path.exists():
         return {}
     raw = json.loads(path.read_text(encoding="utf-8"))

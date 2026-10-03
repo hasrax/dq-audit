@@ -40,6 +40,7 @@ from app.schema_docs import store as docs_store
 from app.schema_docs.generate import document_directory
 from app.schema_docs.prompt import MODULES
 from app.rules.describe import CATEGORY_LABEL
+from app.monitoring import recurrence
 
 # Temporary working name — change these two lines to rebrand the whole app.
 APP_NAME = "ClarityDQ"
@@ -74,6 +75,13 @@ STATUS_LABEL = {"flagged": "⚪ Flagged", "accepted": "✅ Accepted", "rejected"
 SEVERITY_COLOR = {"high": "#d92d20", "medium": "#dd6b20", "low": "#667085"}
 SOURCE_STYLE = {"rule": ("⚙️ RULE · Type 1", "#2563eb"), "llm": ("🤖 LLM · Type 2", "#7c3aed")}
 ALL = "(all)"
+TREND_STYLE = {
+    "new": ("NEW", "#2563eb"),
+    "worsening": ("▲ WORSENING", "#d92d20"),
+    "improving": ("▼ IMPROVING", "#16a34a"),
+    "stable": ("■ STABLE", "#667085"),
+}
+TRENDS = ["new", "recurring", "worsening", "improving", "stable"]
 
 CSS = """
 <style>
@@ -90,6 +98,8 @@ CSS = """
 .issue-desc { margin-top: 8px; font-size: 0.96rem; line-height: 1.45; }
 .issue-rec  { margin-top: 6px; font-size: 0.88rem; opacity: 0.75; font-style: italic; }
 .issue-meta { margin-top: 8px; font-size: 0.78rem; opacity: 0.65; }
+.issue-trend { margin-top: 8px; font-size: 0.84rem; line-height: 1.5; }
+.issue-trend .est { opacity: 0.7; font-style: italic; }
 .rule-card {
   border: 1px solid rgba(128,128,128,0.25);
   border-left: 6px solid var(--accent, #16a34a);
@@ -204,6 +214,7 @@ def main() -> None:
     f_severity = _filter("Severity", ["high", "medium", "low"])
     f_status = _filter("Status", STATUSES, default="flagged")
     f_fixable = _filter("Fixable", ["yes", "no"])
+    f_trend = _filter("Trend", TRENDS)
 
     counts = repository.triage_counts(conn, uid)
     total = upload["issue_count"]
@@ -243,6 +254,10 @@ def main() -> None:
         )
         if f_fixable != ALL:
             issues = [i for i in issues if i.get("fixable") == f_fixable]
+        if f_trend == "recurring":
+            issues = [i for i in issues if i.get("trend_status") not in (None, "new")]
+        elif f_trend != ALL:
+            issues = [i for i in issues if i.get("trend_status") == f_trend]
         aliases = _aliases(conn, upload["source_client"])
         head_l, head_r = st.columns([3, 1])
         head_l.caption(f"Showing {len(issues)} issue(s)")
@@ -257,8 +272,13 @@ def main() -> None:
             )
             _render_bulk_actions(conn, [i["id"] for i in issues])
         rules_by_id = {r["id"]: r for r in repository.fetch_rules(conn, uid)}
+        histories = recurrence.histories_for_upload(conn, uid)
+        projections = recurrence.projections_for_upload(conn, uid)
         for issue in issues:
-            _render_issue_card(conn, issue, aliases, rules_by_id.get(issue.get("rule_ref")))
+            _render_issue_card(
+                conn, issue, aliases, rules_by_id.get(issue.get("rule_ref")),
+                histories.get(issue["id"]), projections.get(issue["id"]),
+            )
 
     with tab_rules:
         _render_rules(conn, upload)
@@ -548,6 +568,8 @@ def _render_overview(conn, upload: dict) -> None:
     row[2].metric("⚪ Low", sev.get("low", 0))
     row[3].metric("⚙️ Rule / 🤖 LLM", f"{src.get('rule', 0)} / {src.get('llm', 0)}")
 
+    _render_recurrence_summary(conn, upload)
+
     if not total:
         st.info("No issues recorded for this upload.")
         return
@@ -569,6 +591,40 @@ def _render_overview(conn, upload: dict) -> None:
             .set_index("table").sort_values("issues", ascending=True).tail(8)
         )
         st.bar_chart(tbl_df, color=TREND_HUE, horizontal=True)
+
+
+def _render_recurrence_summary(conn, upload: dict) -> None:
+    summary = recurrence.recurrence_summary(conn, upload["id"])
+    st.markdown("##### Compared with the previous audit")
+    if not summary["has_previous"]:
+        st.caption(f"This is the first audit for {client_label(upload['source_client'])}; "
+                   "new / recurring trends appear from the second audit onwards.")
+        return
+    c = st.columns(5)
+    c[0].metric("🆕 New", summary["new"])
+    c[1].metric("🔁 Recurring", summary["recurring"])
+    c[2].metric("▲ Worsening", summary["worsening"])
+    c[3].metric("▼ Improving", summary["improving"])
+    c[4].metric("👋 Not seen this time", summary["not_seen"])
+    if summary["not_seen"]:
+        with st.expander(f"Issues from the previous audit not seen in this one ({summary['not_seen']})"):
+            st.caption("Kept for the record, not deleted — they may have been fixed, or the data changed.")
+            aliases = _aliases(conn, upload["source_client"])
+            st.dataframe(
+                [
+                    {
+                        "Location": i["table_name"] + (
+                            "." + display_columns(aliases, i["table_name"], i["column_name"])
+                            if i["column_name"] else ""),
+                        "Dimension": i["dimension"],
+                        "Source": i["source"],
+                        "Rows last time": i["affected_row_count"],
+                        "What was found": (i.get("description") or "")[:160],
+                    }
+                    for i in recurrence.not_seen_issues(conn, upload["id"])
+                ],
+                width="stretch", hide_index=True,
+            )
 
 
 def _process_upload(files, client: str, run_llm: bool, draft_docs: bool) -> dict:
@@ -848,7 +904,24 @@ def _render_bulk_actions(conn, issue_ids: list[int]) -> None:
         st.caption("Applies to the current filtered view. Reversible — re-filter and reset any time.")
 
 
-def _render_issue_card(conn, issue: dict, aliases: dict | None = None, rule: dict | None = None) -> None:
+def _trend_html(issue: dict, history: list[dict] | None, projection: dict | None) -> str:
+    if not history or len(history) < 2:
+        return ""
+    steps = " → ".join(
+        f"{h['as_of']:%d %b}: <b>{h['affected_row_count']:,}</b>" for h in history[-6:]
+    )
+    out = f"📈 Seen in {len(history)} audits · {steps}"
+    if projection:
+        out += (f'<br><span class="est">Next audit, if the trend continues: about '
+                f'{float(projection["projected_value"]):,.0f} rows (estimate from a straight-line '
+                f'fit over {projection["n_points"]} audits)</span>')
+    return f'<div class="issue-trend">{out}</div>'
+
+
+def _render_issue_card(
+    conn, issue: dict, aliases: dict | None = None, rule: dict | None = None,
+    history: list[dict] | None = None, projection: dict | None = None,
+) -> None:
     severity = issue["severity"]
     sev_color = SEVERITY_COLOR.get(severity, "#667085")
     src_label, src_color = SOURCE_STYLE.get(issue["source"], (issue["source"].upper(), "#667085"))
@@ -856,6 +929,8 @@ def _render_issue_card(conn, issue: dict, aliases: dict | None = None, rule: dic
     location = issue["table_name"] + (f".{col_display}" if col_display else "")
 
     pills = _pill(severity.upper(), sev_color) + _pill(src_label, src_color) + _outline_pill(issue["dimension"])
+    if issue.get("trend_status") in TREND_STYLE:
+        pills = _pill(*TREND_STYLE[issue["trend_status"]]) + pills
     if issue.get("fixable") == "yes":
         pills += _pill("✓ Fixable", "#16a34a")
     elif issue.get("fixable") == "no":
@@ -881,6 +956,7 @@ def _render_issue_card(conn, issue: dict, aliases: dict | None = None, rule: dic
   </div>
   <div class="issue-desc">{html.escape(issue["description"] or "")}</div>
   {rec_html}
+  {_trend_html(issue, history, projection)}
   <div class="issue-meta">{" · ".join(meta_bits)}</div>
 </div>''',
         unsafe_allow_html=True,

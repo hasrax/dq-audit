@@ -16,6 +16,18 @@ ALIASES_DIR = Path(__file__).resolve().parents[2] / "config" / "aliases"
 CLIENT_LABELS_PATH = Path(__file__).resolve().parents[2] / "config" / "client_labels.json"
 
 
+REPLAY_SUFFIX = "_replay"
+
+
+def base_client(source_client: str | None) -> str | None:
+    """The client whose config (privacy overrides, aliases, schema docs) a
+    source uses. A time-sliced replay ("hemas_replay") is the same
+    organisation's data, so it shares the base client's configuration."""
+    if source_client and source_client.endswith(REPLAY_SUFFIX):
+        return source_client[: -len(REPLAY_SUFFIX)]
+    return source_client
+
+
 def load_client_labels(path: Path | str | None = None) -> dict[str, str]:
     """source_client -> anonymised label (e.g. "Company A")."""
     path = Path(path or CLIENT_LABELS_PATH)
@@ -36,7 +48,7 @@ def client_label(source_client: str | None, labels: dict[str, str] | None = None
 
 def load_aliases(source_client: str, config_dir: Path | str | None = None) -> dict[str, dict[str, str]]:
     directory = Path(config_dir) if config_dir else ALIASES_DIR
-    path = directory / f"{source_client}.json"
+    path = directory / f"{base_client(source_client)}.json"
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))

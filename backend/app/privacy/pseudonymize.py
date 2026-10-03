@@ -35,11 +35,14 @@ further in production (documented trade-off).
 from __future__ import annotations
 
 import hashlib
+import json
+from pathlib import Path
 
 import pandas as pd
 
 from app.profiler.types import TYPE_DATE, TYPE_DECIMAL, TYPE_INT, TYPE_UNKNOWN
 
+PRIVACY_DIR = Path(__file__).resolve().parents[3] / "config" / "privacy"
 DEFAULT_SALT = "dq-audit"
 SAMPLE_SIZE = 1000
 DISTINCT_RATIO_THRESHOLD = 0.10
@@ -95,6 +98,26 @@ def classify_pii_columns(
         if col in decisions:
             decisions[col] = True
     return decisions
+
+
+def load_overrides(source_client: str | None, config_dir: Path | str | None = None) -> dict[str, dict[str, set[str]]]:
+    """Per-client overrides from config/privacy/<client>.json as
+    {table: {"mask": set, "keep": set}}; {} if the client has none.
+
+    Loaded automatically on every LLM path so a cloud call can never
+    skip the overrides the heuristic depends on.
+    """
+    if not source_client:
+        return {}
+    path = Path(config_dir or PRIVACY_DIR) / f"{source_client}.json"
+    if not path.exists():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        table: {k: set(v.get(k, [])) for k in ("mask", "keep")}
+        for table, v in raw.items()
+        if not table.startswith("_") and isinstance(v, dict)
+    }
 
 
 def mask_value(value: str, salt: str = DEFAULT_SALT) -> str:

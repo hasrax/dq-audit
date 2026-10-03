@@ -66,12 +66,16 @@ python -m venv .venv
 cp backend/.env.example backend/.env      # then edit backend/.env with real values
 
 # 3. database (once)
-#    create an empty database named dq_audit in PostgreSQL; the schema is
-#    applied automatically on first use.
+#    create an empty database named dq_audit in PostgreSQL; numbered
+#    migrations (backend/app/db/migrations/NNN_*.sql) are applied
+#    automatically on first use and recorded in schema_migrations.
 ```
 
 `backend/.env` (gitignored) holds the LLM and PostgreSQL credentials — see
-`backend/.env.example`.
+`backend/.env.example`. `config/privacy/<client>.json` lists columns that must
+always be masked before any cloud LLM call (phone numbers stored as numbers,
+IDs, GPS); `config/client_labels.json` maps clients to anonymised display
+labels (Company A/B/C) used throughout the UI.
 
 ---
 
@@ -83,7 +87,11 @@ All commands run from the repo root with the venv's Python.
 # audit + persist + score a client's CSV/Excel directory (add --llm for Type 2)
 python -m app.db.persist data/hemas --llm      # run from backend/, or set PYTHONPATH=backend
 
-# the tool (Overview / Upload / Triage / Relationships / Scores)
+# AI-drafted schema documentation (review + verify it in the Schema review tab;
+# verified docs are added to later LLM audits). Skips already-documented tables.
+python -m app.schema_docs.generate data/hemas --client=hemas [--regenerate]
+
+# the tool (Overview / Upload / Triage / Schema review / Relationships / Scores)
 streamlit run dashboard/app.py
 
 # HTTP API (health, uploads, issues, score, triage)

@@ -18,7 +18,7 @@ from app.scoring.score import compute_dq_score
 
 VALID_STATUSES = ("flagged", "accepted", "rejected", "considered")
 
-SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
+MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 
 
 def connect(settings: Settings | None = None) -> psycopg.Connection:
@@ -26,9 +26,27 @@ def connect(settings: Settings | None = None) -> psycopg.Connection:
     return psycopg.connect(settings.db_url)
 
 
-def apply_schema(conn: psycopg.Connection) -> None:
-    conn.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
+def apply_schema(conn: psycopg.Connection) -> list[str]:
+    """Apply any numbered migrations (NNN_name.sql) not yet recorded.
+
+    Each file runs once, in filename order, and is recorded in
+    schema_migrations. 001 is idempotent, so databases created before
+    migrations existed adopt it safely. Returns the versions applied now.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations ("
+        "version TEXT PRIMARY KEY, applied_at TIMESTAMP NOT NULL DEFAULT now())"
+    )
+    done = {r[0] for r in conn.execute("SELECT version FROM schema_migrations").fetchall()}
+    applied = []
+    for path in sorted(MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql")):
+        if path.stem in done:
+            continue
+        conn.execute(path.read_text(encoding="utf-8"))
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (path.stem,))
+        applied.append(path.stem)
     conn.commit()
+    return applied
 
 
 def create_upload(conn: psycopg.Connection, filename: str, source_client: str, row_count: int) -> int:

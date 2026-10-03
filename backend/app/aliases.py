@@ -13,6 +13,25 @@ import json
 from pathlib import Path
 
 ALIASES_DIR = Path(__file__).resolve().parents[2] / "config" / "aliases"
+CLIENT_LABELS_PATH = Path(__file__).resolve().parents[2] / "config" / "client_labels.json"
+
+
+def load_client_labels(path: Path | str | None = None) -> dict[str, str]:
+    """source_client -> anonymised label (e.g. "Company A")."""
+    path = Path(path or CLIENT_LABELS_PATH)
+    if not path.exists():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return {k: v for k, v in raw.items() if not k.startswith("_")}
+
+
+def client_label(source_client: str | None, labels: dict[str, str] | None = None) -> str:
+    """Anonymised display name for a client; real names never reach the UI,
+    logs or exports. Unknown clients show as-is (the user typed them)."""
+    if not source_client:
+        return ""
+    labels = load_client_labels() if labels is None else labels
+    return labels.get(source_client, source_client)
 
 
 def load_aliases(source_client: str, config_dir: Path | str | None = None) -> dict[str, dict[str, str]]:

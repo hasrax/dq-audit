@@ -1,5 +1,6 @@
--- Issue repository schema (Layer 0-4 persistence).
--- Idempotent: safe to run on every startup.
+-- 001: initial issue repository schema (Layer 0-4 persistence).
+-- Idempotent (IF NOT EXISTS) so databases created before numbered
+-- migrations existed adopt it without changes.
 
 CREATE TABLE IF NOT EXISTS uploads (
     id            SERIAL PRIMARY KEY,

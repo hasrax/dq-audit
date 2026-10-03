@@ -1,0 +1,6 @@
+{
+  "_comment": "Anonymised display labels. Internal source_client keys stay unchanged in the database; the UI, logs and exports show only these labels.",
+  "hemas": "Company A",
+  "ussawatte": "Company B",
+  "STAnthony": "Company C"
+}

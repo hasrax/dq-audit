@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 import pandas as pd
 import streamlit as st
 
-from app.aliases import display_columns, load_aliases
+from app.aliases import client_label, display_columns, load_aliases, load_client_labels
 from app.db import repository
 from app.db.persist import persist_audit
 import json
@@ -36,13 +36,16 @@ from app.export import issues_to_csv, score_to_csv
 from app.llm.run_audit import audit_directory
 from app.scoring.score import load_weights, score_contributions
 from app.scoring.score import DEFAULT_K, DIMENSION_ALIASES, SEVERITY_POINTS
+from app.schema_docs import store as docs_store
+from app.schema_docs.generate import document_directory
+from app.schema_docs.prompt import MODULES
 
 # Temporary working name — change these two lines to rebrand the whole app.
 APP_NAME = "ClarityDQ"
-APP_TAGLINE = "Explainable Data Quality Audit for SeefaERP"
+APP_TAGLINE = "Explainable Data Quality Audit for SME ERP data"
 
 ABOUT_MD = f"""
-**{APP_NAME}** is an explainable data quality audit tool for SeefaERP SME
+**{APP_NAME}** is an explainable data quality audit tool for SME ERP
 exports. It reads CSV/Excel files (no database access) and flags issues in
 plain language.
 
@@ -141,6 +144,14 @@ def get_conn():
     return repository.connect()
 
 
+def _aliases(conn, source_client: str) -> dict:
+    """Column display names: config/aliases overlaid with verified schema-doc names."""
+    merged = {t: dict(m) for t, m in load_aliases(source_client).items() if isinstance(m, dict)}
+    for table, names in docs_store.doc_aliases(conn, source_client).items():
+        merged.setdefault(table, {}).update(names)
+    return merged
+
+
 def _filter(label: str, options: list[str], default: str = ALL):
     choices = [ALL, *options]
     return st.sidebar.selectbox(label, choices, index=choices.index(default))
@@ -175,7 +186,7 @@ def main() -> None:
         return
 
     upload_labels = {
-        f"#{u['id']} · {u['source_client']} · {u['pending_count']}/{u['issue_count']} pending": u
+        f"#{u['id']} · {client_label(u['source_client'])} · {u['pending_count']}/{u['issue_count']} pending": u
         for u in uploads
     }
     chosen = st.sidebar.selectbox("Audit run", list(upload_labels))
@@ -206,15 +217,15 @@ def main() -> None:
     with st.sidebar.expander(f"ℹ️ About {APP_NAME}"):
         st.markdown(ABOUT_MD)
 
-    tab_overview, tab_upload, tab_triage, tab_rel, tab_scores = st.tabs(
-        ["📋 Overview", "⬆️ New audit", "🧾 Triage", "🔗 Relationships", "📊 Scores & trend"]
+    tab_overview, tab_upload, tab_triage, tab_docs, tab_rel, tab_scores = st.tabs(
+        ["📋 Overview", "⬆️ New audit", "🧾 Triage", "📘 Schema review", "🔗 Relationships", "📊 Scores & trend"]
     )
 
     with tab_overview:
         _render_overview(conn, upload)
 
     with tab_upload:
-        _render_upload()
+        _render_upload(conn)
 
     with tab_triage:
         issues = repository.fetch_issues(
@@ -226,7 +237,7 @@ def main() -> None:
         )
         if f_fixable != ALL:
             issues = [i for i in issues if i.get("fixable") == f_fixable]
-        aliases = load_aliases(upload["source_client"])
+        aliases = _aliases(conn, upload["source_client"])
         head_l, head_r = st.columns([3, 1])
         head_l.caption(f"Showing {len(issues)} issue(s)")
         if issues:
@@ -242,11 +253,146 @@ def main() -> None:
         for issue in issues:
             _render_issue_card(conn, issue, aliases)
 
+    with tab_docs:
+        _render_schema_review(conn, upload)
+
     with tab_rel:
         _render_relationships(conn, upload)
 
     with tab_scores:
         _render_scores(conn, upload)
+
+
+CONFIDENCE_STYLE = {
+    "LOW": ("🟠", "orange", "Needs review"),
+    "MEDIUM": ("🔵", "blue", "Medium confidence"),
+    "HIGH": ("🟢", "green", "High confidence"),
+    "VERIFIED": ("✅", "green", "Verified"),
+}
+DOC_VIEWS = {"All": None, "Needs review": "LOW", "Drafts": "draft", "Verified": "VERIFIED"}
+
+
+def _render_schema_review(conn, upload: dict) -> None:
+    client = upload["source_client"]
+    label = client_label(client)
+    st.markdown(f"#### Schema documentation — {label}")
+    st.caption(
+        "The AI drafted what each table and column means from its statistics. "
+        "Check each description and correct anything wrong. Only **verified** "
+        "descriptions are given to the AI auditor in later audits."
+    )
+
+    tables = docs_store.fetch_doc_tables(conn, client)
+    if not tables:
+        st.info(
+            f"No schema documentation for {label} yet. In **⬆️ New audit**, tick "
+            "*Draft schema documentation with AI*, or run "
+            "`python -m app.schema_docs.generate <data_dir> --client=<key>`."
+        )
+        return
+
+    stats = docs_store.doc_stats(conn, client)
+    m = st.columns(4)
+    m[0].metric("Tables verified", f"{stats['tables_verified']} / {stats['tables']}")
+    m[1].metric("Columns verified", f"{stats['columns_verified']} / {stats['columns']}")
+    m[2].metric("🟠 Need review", sum(t["low_count"] for t in tables))
+    m[3].metric("Drafts left", stats["columns"] - stats["columns_verified"])
+    if stats["columns"]:
+        st.progress(
+            stats["columns_verified"] / stats["columns"],
+            text=f"{stats['columns_verified']} of {stats['columns']} columns verified",
+        )
+
+    by_name = {t["table_name"]: t for t in tables}
+    table = st.selectbox(
+        "Table",
+        list(by_name),
+        key=f"docs_table_{client}",
+        format_func=lambda n: (
+            f"{'✅' if by_name[n]['verified_at'] else '📄'} {n} · {by_name[n]['table_module'] or 'Other'} · "
+            f"{by_name[n]['verified_count']}/{by_name[n]['column_count']} columns verified"
+        ),
+    )
+    tdoc = by_name[table]
+
+    with st.container(border=True):
+        status = (
+            f":green[✅ Verified {tdoc['verified_at']:%d %b %Y}]" if tdoc["verified_at"]
+            else ":orange[📄 Draft — not yet verified]"
+        )
+        st.markdown(f"**{table}** &nbsp; {status}")
+        with st.form(f"doc_tbl_{client}_{table}"):
+            desc = st.text_area("What this table holds", value=tdoc["table_description"] or "", height=80)
+            current = tdoc["table_module"] if tdoc["table_module"] in MODULES else "Other"
+            module = st.selectbox("Business area", MODULES, index=MODULES.index(current))
+            c1, c2, _ = st.columns([1, 1.6, 2])
+            save = c1.form_submit_button("💾 Save", width="stretch")
+            verify = c2.form_submit_button(
+                "✅ Verify table + all columns", type="primary", width="stretch",
+                help="Marks the table and every remaining column as verified. Check the columns first.",
+            )
+        if save or verify:
+            docs_store.update_table(conn, client, table, desc.strip(), module)
+            if verify:
+                n = docs_store.verify_table(conn, client, table)
+                st.toast(f"{table} verified ({n} column(s) confirmed)", icon="✅")
+            st.rerun()
+        fixed = []
+        if tdoc["missing_columns"]:
+            fixed.append(f"{len(tdoc['missing_columns'])} column(s) the AI skipped were added as *Needs review*")
+        if tdoc["hallucinated_columns"]:
+            fixed.append(f"{len(tdoc['hallucinated_columns'])} column(s) the AI invented were removed")
+        if fixed:
+            st.caption("Draft check: " + "; ".join(fixed) + ".")
+
+    view = st.segmented_control("Show", list(DOC_VIEWS), default="All", key=f"docs_view_{client}_{table}")
+    wanted = DOC_VIEWS.get(view or "All")
+    columns = docs_store.fetch_doc_columns(conn, client, table)
+    if wanted == "draft":
+        columns = [c for c in columns if c["confidence"] != "VERIFIED"]
+    elif wanted:
+        columns = [c for c in columns if c["confidence"] == wanted]
+    if not columns:
+        st.caption("Nothing to show in this view.")
+    for col in columns:
+        _render_doc_column(conn, col)
+
+
+def _render_doc_column(conn, col: dict) -> None:
+    conf = col["confidence"]
+    icon, color, text = CONFIDENCE_STYLE[conf]
+    name = col["display_name"] or "unnamed"
+    title = f"{icon} **{col['column_name']}** · {name} — :{color}[{text}]"
+    with st.expander(title, expanded=(conf == "LOW")):
+        with st.form(f"doc_col_{col['id']}", border=False):
+            a, b = st.columns([1, 2])
+            display = a.text_input("Short name", value=col["display_name"] or "")
+            domain = b.text_input("Expected values", value=col["expected_domain"] or "")
+            desc = st.text_area("What it means", value=col["description"] or "", height=68)
+            rules = st.text_area(
+                "Rules (one per line)", value="\n".join(col["business_rules"] or []), height=88,
+            )
+            c1, c2, _ = st.columns([1, 1.3, 3])
+            save = c1.form_submit_button("💾 Save", width="stretch")
+            verify = c2.form_submit_button(
+                "✅ Save & verify", type="primary", width="stretch", disabled=(conf == "VERIFIED"),
+            )
+        if save or verify:
+            docs_store.update_column(
+                conn, col["id"], display.strip(), desc.strip(), domain.strip(),
+                [r.strip() for r in rules.splitlines() if r.strip()],
+            )
+            if verify:
+                docs_store.verify_column(conn, col["id"])
+            st.rerun()
+
+        if conf == "VERIFIED":
+            how = "edited before verifying" if col["edited_before_verify"] else "confirmed as drafted"
+            st.caption(f"Verified {col['verified_at']:%d %b %Y} · {how}")
+        elif col["llm_confidence"]:
+            st.caption(f"AI draft confidence: {col['llm_confidence'].title()}")
+        if col["llm_description"] and " ".join((col["description"] or "").split()) != " ".join(col["llm_description"].split()):
+            st.caption(f"Original AI draft: {col['llm_description']}")
 
 
 def _render_relationships(conn, upload: dict) -> None:
@@ -261,7 +407,7 @@ def _render_relationships(conn, upload: dict) -> None:
         st.info("No cross-table relationships were discovered for this upload.")
         return
 
-    aliases = load_aliases(upload["source_client"])
+    aliases = _aliases(conn, upload["source_client"])
     confirmed_n = sum(1 for r in rels if r["confirmed"])
     st.caption(f"**{confirmed_n} of {len(rels)}** confirmed.")
 
@@ -291,7 +437,7 @@ def _render_overview(conn, upload: dict) -> None:
     overall = score["overall_score"]
     color = _status_color(overall)
 
-    st.caption(f"Upload #{uid} — **{upload['source_client']}** · {upload['row_count']:,} rows audited")
+    st.caption(f"Upload #{uid} — **{client_label(upload['source_client'])}** · {upload['row_count']:,} rows audited")
 
     top = st.columns([1.5, 1, 1, 1])
     top[0].markdown(
@@ -338,44 +484,74 @@ def _render_overview(conn, upload: dict) -> None:
         st.bar_chart(tbl_df, color=TREND_HUE, horizontal=True)
 
 
-def _process_upload(files, client: str, run_llm: bool) -> dict:
-    """Write uploaded CSVs to a temp dir and run the full audit pipeline."""
+def _process_upload(files, client: str, run_llm: bool, draft_docs: bool) -> dict:
+    """Write uploaded CSVs to a temp dir and run the full audit pipeline.
+
+    Schema docs are drafted first so that, once verified, a later audit's
+    LLM pass can use them; drafting only covers tables not yet documented.
+    """
     tmp = Path(tempfile.mkdtemp(prefix="dq_upload_"))
     for f in files:
         (tmp / f.name).write_bytes(f.getvalue())
 
+    drafted = document_directory(tmp, source_client=client) if draft_docs else {}
     llm_issues = None
     if run_llm:
-        audited = audit_directory(tmp)
+        audited = audit_directory(tmp, source_client=client)
         llm_issues = [issue for table_issues in audited.values() for issue in table_issues]
-    return persist_audit(tmp, source_client=client, llm_issues=llm_issues)
+    result = persist_audit(tmp, source_client=client, llm_issues=llm_issues)
+    result["drafted_tables"] = len(drafted)
+    return result
 
 
-def _render_upload() -> None:
-    st.markdown("#### Upload a SeefaERP CSV export and run an audit")
+NEW_CLIENT = "➕ New client…"
+
+
+def _render_upload(conn) -> None:
+    st.markdown("#### Upload an ERP CSV export and run an audit")
     st.caption(
         "Files are headerless CSV exports. Upload related tables together "
         "(e.g. a header + its detail table) so cross-table checks can run."
     )
     files = st.file_uploader("CSV file(s)", type=["csv"], accept_multiple_files=True)
-    client = st.text_input("Client / source name", placeholder="e.g. hemas_2026_q3")
+
+    labels = load_client_labels()
+    known = sorted({u["source_client"] for u in repository.list_uploads(conn)} | set(labels))
+    by_label = {client_label(c, labels): c for c in known}
+    picked = st.selectbox("Organisation", [*by_label, NEW_CLIENT])
+    if picked == NEW_CLIENT:
+        client = st.text_input("New client key", placeholder="e.g. company_d").strip()
+    else:
+        client = by_label[picked]
+
+    draft_docs = st.checkbox(
+        "Draft schema documentation with AI (tables not yet documented) — review it in the 📘 Schema review tab",
+        value=False,
+    )
     run_llm = st.checkbox(
         "Also run AI contextual analysis (LLM) — slower; sends pseudonymized samples to the cloud model",
         value=False,
     )
 
-    if st.button("▶️ Run audit", type="primary", disabled=not (files and client.strip())):
-        with st.spinner("Profiling, running rules" + (", AI analysis" if run_llm else "") + ", scoring…"):
+    if st.button("▶️ Run audit", type="primary", disabled=not (files and client)):
+        steps = ", ".join(
+            ["profiling", "running rules"]
+            + (["drafting schema docs"] if draft_docs else [])
+            + (["AI analysis"] if run_llm else [])
+            + ["scoring"]
+        )
+        with st.spinner(steps[0].upper() + steps[1:] + "…"):
             try:
-                result = _process_upload(files, client.strip(), run_llm)
+                result = _process_upload(files, client, run_llm, draft_docs)
             except Exception as exc:  # noqa: BLE001 -- surface any failure to the user
                 st.error(f"Audit failed: {exc}")
                 return
+        drafted = f" · schema docs drafted for {result['drafted_tables']} table(s)" if draft_docs else ""
         st.success(
             f"Audit complete — upload #{result['upload_id']}: "
             f"{result['issues']} issues "
             f"({result['rule_issues']} rule + {result['llm_issues']} LLM) · "
-            f"DQ score {result['overall_score']}/100"
+            f"DQ score {result['overall_score']}/100{drafted}"
         )
         st.info("Open the **Triage** or **Scores** tab and select this upload from the sidebar.")
 
@@ -431,7 +607,7 @@ def _render_scores(conn, upload: dict) -> None:
         st.line_chart(df, y="DQ score", color=TREND_HUE)
     else:
         st.caption(
-            f"Only one scored upload for **{upload['source_client']}** so far — "
+            f"Only one scored upload for **{client_label(upload['source_client'])}** so far — "
             "the trend line appears once another upload for this client is audited "
             "(e.g. a later export, or re-auditing after fixes)."
         )
@@ -470,8 +646,8 @@ def _render_complementarity(conn, upload: dict) -> None:
         st.download_button(
             "⬇️ Download figure (PNG, for the dissertation)",
             data=_e2_figure_png(json.dumps(by_dim, sort_keys=True),
-                                f"Rule–LLM complementarity — {upload['source_client']}"),
-            file_name=f"complementarity_{upload['source_client']}.png",
+                                f"Rule–LLM complementarity — {client_label(upload['source_client'])}"),
+            file_name=f"complementarity_{client_label(upload['source_client']).replace(' ', '_')}.png",
             mime="image/png",
         )
 
@@ -505,7 +681,7 @@ def _render_triage_metrics(conn, upload: dict) -> None:
 
 def _render_dimension_breakdown(conn, upload: dict, score: dict) -> None:
     st.markdown("#### By dimension — click to see what drives each score")
-    aliases = load_aliases(upload["source_client"])
+    aliases = _aliases(conn, upload["source_client"])
     # Only non-rejected issues count toward the score, so only they are shown.
     scored_issues = [i for i in repository.fetch_issues(conn, upload["id"]) if i.get("status") != "rejected"]
 
@@ -564,7 +740,7 @@ def _meter(label: str, value: float) -> str:
 
 
 def _render_header(upload: dict, counts: dict, total: int, reviewed: int) -> None:
-    st.caption(f"Upload #{upload['id']} — **{upload['source_client']}** · {total} issues")
+    st.caption(f"Upload #{upload['id']} — **{client_label(upload['source_client'])}** · {total} issues")
     if total:
         st.progress(reviewed / total, text=f"{reviewed} of {total} reviewed")
 

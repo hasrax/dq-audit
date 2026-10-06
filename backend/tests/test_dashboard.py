@@ -68,7 +68,8 @@ def test_triage_has_filters_and_decision_buttons():
     assert {"Found by", "Status", "Severity", "Trend"} <= {s.label for s in at.selectbox}
     uploads = repository.list_uploads(repository.connect())
     if uploads[0]["pending_count"] > 0:
-        assert any(b.label.endswith("Accept") for b in at.button)
+        keys = [b.key or "" for b in at.button]
+        assert any(k.startswith("acc_") for k in keys) and any(k.startswith("open_") for k in keys)
 
 
 def test_switching_company_and_audit_does_not_break():

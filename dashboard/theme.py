@@ -164,6 +164,18 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 .issue-trend {{ margin-top: 8px; font-size: .88rem; line-height: 1.5; color: var(--text); }}
 .issue-trend .est {{ color: var(--muted); font-style: italic; }}
 
+/* compact issue rows (triage list) */
+.issue-row {{ background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--sev, {MUTED});
+  border-radius: 12px; padding: 10px 14px; }}
+.issue-row .top {{ display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }}
+.issue-row .loc {{ font-weight: 700; color: var(--text); }}
+.issue-row .loc .col {{ font-weight: 500; color: var(--muted); }}
+.issue-row .sum {{ margin-top: 4px; color: var(--text); font-size: .93rem; line-height: 1.45;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.issue-row .meta {{ margin-top: 3px; color: var(--faint); font-size: .8rem; }}
+.section-label {{ font-size: .78rem; text-transform: uppercase; letter-spacing: .5px; color: var(--faint);
+  margin: 14px 0 4px 0; font-weight: 650; }}
+
 .rule-card {{ background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent, {SAGE});
   border-radius: 14px; padding: 12px 16px 10px 16px; margin: 0 0 4px 0; }}
 .rule-what {{ font-size: 1rem; font-weight: 650; line-height: 1.45; margin-top: 6px; color: var(--text); }}

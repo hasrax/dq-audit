@@ -387,14 +387,8 @@ def _render_triage(conn, upload: dict) -> None:
         _render_bulk_actions(conn, [i["id"] for i in issues])
     else:
         st.info("No issues match these filters. Try setting **Status** to *All*.")
-    rules_by_id = {r["id"]: r for r in repository.fetch_rules(conn, uid)}
-    histories = recurrence.histories_for_upload(conn, uid)
-    projections = recurrence.projections_for_upload(conn, uid)
     for issue in issues:
-        _render_issue_card(
-            conn, issue, aliases, rules_by_id.get(issue.get("rule_ref")),
-            histories.get(issue["id"]), projections.get(issue["id"]),
-        )
+        _issue_row(conn, issue, aliases)
 
 
 def _render_settings(conn) -> None:
@@ -1324,97 +1318,136 @@ def _trend_html(issue: dict, history: list[dict] | None, projection: dict | None
     return f'<div class="issue-trend">{out}</div>'
 
 
-def _render_issue_card(
-    conn, issue: dict, aliases: dict | None = None, rule: dict | None = None,
-    history: list[dict] | None = None, projection: dict | None = None,
-) -> None:
-    severity = issue["severity"]
-    sev_color = SEVERITY_COLOR.get(severity, "#667085")
-    src_label, src_color = SOURCE_STYLE.get(issue["source"], (issue["source"].upper(), "#667085"))
-    col_display = display_columns(aliases or {}, issue["table_name"], issue["column_name"])
-    location = html.escape(issue["table_name"]) + (
-        f' <span class="col">· {html.escape(col_display)}</span>' if col_display else "")
-
-    pills = _pill(severity.upper(), sev_color) + _pill(src_label, src_color) + _outline_pill(issue["dimension"])
+def _issue_pills(issue: dict, with_status: bool = True) -> str:
+    pills = ""
     if issue.get("trend_status") in TREND_STYLE:
-        pills = _pill(*TREND_STYLE[issue["trend_status"]]) + pills
+        pills += _pill(*TREND_STYLE[issue["trend_status"]])
+    pills += _pill(issue["severity"].title(), SEVERITY_COLOR.get(issue["severity"], ui.MUTED))
+    pills += _pill(*SOURCE_STYLE.get(issue["source"], (issue["source"], ui.MUTED)))
+    if with_status and issue["status"] != "flagged":
+        label, color = ui.STATUS[issue["status"]]
+        who = f" · {issue['reviewed_by']}" if issue.get("reviewed_by") else ""
+        pills += _pill(label + who, color)
+    return pills
+
+
+def _location_html(issue: dict, aliases: dict) -> str:
+    col = display_columns(aliases or {}, issue["table_name"], issue["column_name"])
+    return html.escape(issue["table_name"]) + (f' <span class="col">· {html.escape(col)}</span>' if col else "")
+
+
+def _issue_row(conn, issue: dict, aliases: dict) -> None:
+    """One compact, scannable row with quick decisions; Open shows everything."""
+    sev_color = SEVERITY_COLOR.get(issue["severity"], ui.MUTED)
+    rows = issue.get("affected_row_count")
+    if rows is None:
+        rows = (issue.get("row_reference") or {}).get("count")
+    meta = [issue["dimension"].replace("_", " ")]
+    if rows is not None:
+        meta.append(f"{rows:,} row(s) affected")
     if issue.get("fixable") == "yes":
-        pills += _pill("✓ Fixable", ui.SAGE)
-    elif issue.get("fixable") == "no":
-        pills += _outline_pill("Not fixable")
-    if issue["status"] != "flagged":
-        who = f" by {issue['reviewed_by']}" if issue.get("reviewed_by") else ""
-        pills += _outline_pill(STATUS_LABEL.get(issue["status"], issue["status"]) + who)
+        meta.append("fixable")
+    text, decide_a, decide_r, open_b = st.columns([8.4, 0.75, 0.75, 1.1], vertical_alignment="center")
+    text.markdown(
+        f'''<div class="issue-row" style="--sev:{sev_color}">
+  <div class="top"><span class="loc">{_location_html(issue, aliases)}</span>
+  <span class="pills">{_issue_pills(issue)}</span></div>
+  <div class="sum">{html.escape(issue["description"] or "")}</div>
+  <div class="meta">{html.escape(" · ".join(meta))}</div>
+</div>''',
+        unsafe_allow_html=True,
+    )
+    if decide_a.button("", key=f"acc_{issue['id']}", icon=":material/check:", help="Accept — this is a real issue",
+                       width="stretch"):
+        _decide(conn, issue["id"], "accepted")
+    if decide_r.button("", key=f"rej_{issue['id']}", icon=":material/close:", help="Reject — not a problem",
+                       width="stretch"):
+        _decide(conn, issue["id"], "rejected")
+    if open_b.button("Open", key=f"open_{issue['id']}", icon=":material/open_in_full:", width="stretch"):
+        _issue_dialog(conn, issue["id"])
 
-    ref = issue.get("row_reference") or {}
-    meta_bits = []
-    if ref.get("count") is not None:
-        meta_bits.append(f"Affected rows: <b>{ref['count']}</b>")
-    if ref.get("sample_rows"):
-        meta_bits.append("e.g. rows " + ", ".join(str(r) for r in ref["sample_rows"][:5]))
 
-    rec_html = f'<div class="issue-rec">💡 {html.escape(issue["recommendation"])}</div>' if issue.get("recommendation") else ""
-    tint = f"rgba({int(sev_color[1:3],16)},{int(sev_color[3:5],16)},{int(sev_color[5:7],16)},0.05)"
-
+@st.dialog("Issue details", width="large")
+def _issue_dialog(conn, issue_id: int) -> None:
+    issue = repository.fetch_issue(conn, issue_id)
+    if issue is None:
+        st.error("This issue no longer exists.")
+        return
+    aliases = _aliases(conn, issue["source_client"])
+    sev_color = SEVERITY_COLOR.get(issue["severity"], ui.MUTED)
+    fix = ("Fixable from the data itself" if issue.get("fixable") == "yes"
+           else "Needs a business decision to fix" if issue.get("fixable") == "no" else "")
     st.markdown(
-        f'''<div class="issue-card" style="--sev:{sev_color}; --tint:{tint}">
-  <div class="issue-head">
-    <span class="issue-title">{location}</span>
-    <span class="pills">{pills}</span>
-  </div>
+        f'''<div class="issue-card" style="--sev:{sev_color}">
+  <div class="issue-head"><span class="issue-title">{_location_html(issue, aliases)}</span>
+  <span class="pills">{_issue_pills(issue)}</span></div>
+  <div class="issue-meta">{html.escape(issue["dimension"].replace("_", " ").capitalize())} · issue #{issue["id"]}
+   · audit #{issue["upload_id"]} (data as of {issue["as_of"]:%d %b %Y}){" · " + fix if fix else ""}</div>
+  <div class="section-label">What was found</div>
   <div class="issue-desc">{html.escape(issue["description"] or "")}</div>
-  {rec_html}
-  {_trend_html(issue, history, projection)}
-  <div class="issue-meta">{" · ".join(meta_bits)}</div>
+  {f'<div class="section-label">What to do</div><div class="issue-rec">{html.escape(issue["recommendation"])}</div>'
+   if issue.get("recommendation") else ""}
+  {_trend_html(issue, recurrence.issue_history(conn, issue_id),
+               recurrence.projections_for_upload(conn, issue["upload_id"]).get(issue_id))}
 </div>''',
         unsafe_allow_html=True,
     )
 
-    samples = ref.get("samples")
-    if samples:
-        shown, total_affected = len(samples), ref.get("count", len(samples))
-        with st.expander(f"🔎 View affected rows (sample of {shown} of {total_affected})"):
-            table = issue["table_name"]
-            preview = []
-            for s in samples:
-                row = {"row #": s["row"]}
-                for col, val in s["values"].items():
-                    row[display_columns(aliases or {}, table, col)] = val
-                preview.append(row)
-            st.dataframe(preview, width="stretch", hide_index=True)
-
-    if rule:
-        with st.expander("📏 Why was this flagged?"):
+    why, rows_tab = st.tabs(["Why this was flagged", "Affected rows"])
+    with why:
+        rule = repository.fetch_rule(conn, issue["rule_ref"]) if issue.get("rule_ref") else None
+        if rule:
             st.markdown(f"**{rule['what_text']}**")
             st.markdown(rule["why_text"])
-            st.caption(_evidence_text(rule) + " · rule derived automatically from the data profile")
+            st.caption(_evidence_text(rule) + " · rule created automatically from the data profile")
+        elif issue["source"] == "llm":
+            st.markdown("Found by the **AI auditor**, which looked at the table's statistics and a small, "
+                        "privacy-masked sample of rows for problems fixed rules can't express "
+                        "(unusual values, business-logic conflicts, near-duplicates).")
+            st.caption("AI findings can be wrong — your accept / reject decisions measure how often, "
+                       "and rejected findings teach the AI what not to report for this company.")
+        else:
+            st.caption("No rule details were recorded for this issue.")
+    with rows_tab:
+        ref = issue.get("row_reference") or {}
+        samples = ref.get("samples")
+        if samples:
+            st.caption(f"Sample of {len(samples)} of {ref.get('count', len(samples)):,} affected row(s), as they "
+                       f"were at audit time.")
+            st.dataframe(
+                [{"row #": smp["row"], **{display_columns(aliases, issue["table_name"], c): v
+                                          for c, v in smp["values"].items()}} for smp in samples],
+                width="stretch", hide_index=True,
+            )
+        elif ref.get("sample_rows"):
+            st.caption("Example row numbers: " + ", ".join(str(r) for r in ref["sample_rows"][:10]))
+        else:
+            st.caption("No example rows were recorded for this issue.")
 
-    b1, b2, b3, b4, spacer = st.columns([1, 1, 1, 1.3, 3.7])
-    if b1.button("✅ Accept", key=f"acc_{issue['id']}", width="stretch"):
-        _decide(conn, issue["id"], "accepted")
-    if b2.button("❌ Reject", key=f"rej_{issue['id']}", width="stretch"):
-        _decide(conn, issue["id"], "rejected")
-    if b3.button("🤔 Consider", key=f"con_{issue['id']}", width="stretch"):
-        _decide(conn, issue["id"], "considered")
-    if b4.button("💬 Ask about this", key=f"ask_{issue['id']}", width="stretch"):
-        st.session_state[f"chat_issue_{issue['upload_id']}"] = issue["id"]
-        st.switch_page(st.session_state["_pages"]["ask"])
-
-    with st.expander("📝 Add a note"):
-        note = st.text_area(
-            "Note", value=issue.get("user_note") or "", key=f"note_{issue['id']}",
-            label_visibility="collapsed", placeholder="Optional context for this decision…",
-        )
-        if st.button("Save note", key=f"savenote_{issue['id']}"):
-            repository.update_issue_status(conn, issue["id"], issue["status"], note or None,
-                                           reviewed_by=issue.get("reviewed_by") or _username())
+    st.markdown('<div class="section-label">Your decision</div>', unsafe_allow_html=True)
+    note = st.text_area("Note (optional)", value=issue.get("user_note") or "", key=f"dlg_note_{issue_id}",
+                        placeholder="e.g. Known promotion — discounts above 50% are allowed in December.",
+                        height=70)
+    b = st.columns([1, 1, 1, 1.5])
+    choices = [("Accept", "accepted", ":material/check:", "primary"), ("Reject", "rejected", ":material/close:", "secondary"),
+               ("Unsure", "considered", ":material/help:", "secondary")]
+    for col, (label, status, icon, kind) in zip(b, choices):
+        if col.button(label, key=f"dlg_{status}_{issue_id}", icon=icon, type=kind, width="stretch"):
+            repository.update_issue_status(conn, issue_id, status, note.strip() or None, reviewed_by=_username())
+            st.session_state["flash"] = f"Issue #{issue_id} marked {ui.STATUS[status][0].lower()}"
             st.rerun()
+    if b[3].button("Discuss in chat", key=f"dlg_chat_{issue_id}", icon=":material/forum:", width="stretch"):
+        st.session_state[f"chat_issue_{issue['upload_id']}"] = issue_id
+        st.switch_page(st.session_state["_pages"]["ask"])
+    if issue["status"] != "flagged":
+        st.caption(f"Currently **{ui.STATUS[issue['status']][0].lower()}**"
+                   + (f" by {issue['reviewed_by']}" if issue.get("reviewed_by") else "")
+                   + (f" on {issue['reviewed_at']:%d %b %Y %H:%M}" if issue.get("reviewed_at") else "") + ".")
 
 
 def _decide(conn, issue_id: int, status: str) -> None:
-    # preserve any note already typed for this issue
-    note = st.session_state.get(f"note_{issue_id}") or None
-    repository.update_issue_status(conn, issue_id, status, note, reviewed_by=_username())
+    issue = repository.fetch_issue(conn, issue_id)
+    repository.update_issue_status(conn, issue_id, status, (issue or {}).get("user_note"), reviewed_by=_username())
     st.rerun()
 
 

@@ -192,6 +192,16 @@ def set_rule_suppressed(conn: psycopg.Connection, source_client: str, rule_key: 
     conn.commit()
 
 
+def fetch_issue(conn: psycopg.Connection, issue_id: int) -> dict | None:
+    """One issue with its upload's client and data date (for the detail view)."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute(
+            "SELECT i.*, u.source_client, COALESCE(u.data_as_of, u.upload_date::date) AS as_of "
+            "FROM issues i JOIN uploads u ON u.id = i.upload_id WHERE i.id = %s",
+            (issue_id,),
+        ).fetchone()
+
+
 def fetch_rule(conn: psycopg.Connection, rule_id: int) -> dict | None:
     with conn.cursor(row_factory=dict_row) as cur:
         return cur.execute("SELECT * FROM rules WHERE id = %s", (rule_id,)).fetchone()

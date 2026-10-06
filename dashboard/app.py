@@ -50,6 +50,8 @@ from app.monitoring import recurrence
 from app.llm import feedback
 from app.chat import assistant
 from app.chat import threads as chat_threads
+from app.reports.audit_report import build_markdown as standard_report_md
+from app.reports.render import to_docx, to_pdf
 from app.auth import users as auth
 from app.llm import selection as llm_selection
 from app.aliases import base_client
@@ -268,6 +270,60 @@ def main() -> None:
                                                             help="Upload a new export and run an audit"):
         _import_dialog(conn)
     navigation.run()
+
+
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+@st.dialog("Reports", width="large")
+def _report_dialog(conn, upload: dict, issues: list[dict] | None = None,
+                   history: list[dict] | None = None, from_chat: bool = False) -> None:
+    org = client_label(upload["source_client"])
+    stem = f"{org.replace(' ', '_').replace('·', '')}_audit{upload['id']}"
+    labels = ["Custom report with AI", "Standard audit report"] if from_chat else \
+        ["Standard audit report", "Custom report with AI"]
+    tabs = dict(zip(labels, st.tabs(labels)))
+
+    with tabs["Standard audit report"]:
+        st.caption(f"A ready-made report for **{org}**, audit #{upload['id']}: summary and score, scores by "
+                   "dimension, change since the last audit, the issues that need attention with what to do, "
+                   "and how they were found. Statistics and findings only — no personal data.")
+        a, b = st.columns(2)
+        a.download_button("Word (.docx)", data=lambda: to_docx(standard_report_md(conn, upload)),
+                          file_name=f"{stem}_report.docx", mime=DOCX_MIME, icon=":material/description:",
+                          width="stretch", key="dl_std_docx")
+        b.download_button("PDF", data=lambda: to_pdf(standard_report_md(conn, upload)),
+                          file_name=f"{stem}_report.pdf", mime="application/pdf", icon=":material/picture_as_pdf:",
+                          width="stretch", key="dl_std_pdf")
+
+    with tabs["Custom report with AI"]:
+        scope = (f"{len(issues)} selected issue(s)" if issues else "the whole audit") + \
+            (" and this conversation" if history else "")
+        st.caption(f"Describe the report you need and the AI writes it from {scope}. "
+                   "It only uses audit results and statistics, and won't invent figures.")
+        picked = st.pills("Suggestions", assistant.REPORT_SUGGESTIONS, key="report_sugg",
+                          label_visibility="collapsed")
+        instruction = st.text_area("What should the report cover?", value=picked or "", height=90,
+                                   key=f"report_instr_{picked}",
+                                   placeholder="e.g. A short report for the finance manager about supplier data problems")
+        state_key = f"ai_report_{upload['id']}"
+        if st.button("Write report", type="primary", icon=":material/auto_awesome:",
+                     disabled=not instruction.strip(), key="report_write"):
+            with st.spinner("Writing the report… this can take up to a minute."):
+                try:
+                    st.session_state[state_key] = assistant.write_report(conn, upload, instruction, issues, history)
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"The AI couldn't write the report right now ({exc.__class__.__name__}).")
+        md = st.session_state.get(state_key)
+        if md:
+            with st.container(border=True, height=330):
+                st.markdown(md)
+            a, b = st.columns(2)
+            a.download_button("Word (.docx)", data=to_docx(md), file_name=f"{stem}_custom_report.docx",
+                              mime=DOCX_MIME, icon=":material/description:", width="stretch", key="dl_ai_docx")
+            b.download_button("PDF", data=to_pdf(md), file_name=f"{stem}_custom_report.pdf",
+                              mime="application/pdf", icon=":material/picture_as_pdf:", width="stretch",
+                              key="dl_ai_pdf")
 
 
 @st.dialog("Import an export and run an audit", width="large")
@@ -552,7 +608,7 @@ def _render_chat(conn, upload: dict) -> None:
         audit_issues = repository.fetch_issues(conn, uid)
         attached = chat_threads.thread_issues(conn, active) if active else []
         options = {i["id"]: i for i in audit_issues} | {i["id"]: i for i in attached}
-        head, tools = st.columns([5, 1.2], vertical_alignment="bottom")
+        head, report_b, tools = st.columns([4.6, 1.2, 1.2], vertical_alignment="bottom")
         chosen = head.multiselect(
             "Issues in this chat", list(options), default=[i["id"] for i in attached],
             format_func=lambda i: _issue_option_label(options[i], aliases),
@@ -571,6 +627,10 @@ def _render_chat(conn, upload: dict) -> None:
                 chat_threads.detach_issue(conn, active, i)
             st.rerun()
         focus = [options[i] for i in chosen]
+        if report_b.button("Report", icon=":material/summarize:", key=f"chat_report_{active}", width="stretch",
+                           help="Create a report from this chat"):
+            _report_dialog(conn, upload, focus, [dict(m) for m in chat_threads.messages(conn, active)]
+                           if active else [], from_chat=True)
 
         history = chat_threads.messages(conn, active) if active else []
         with st.container(border=True, height=430):
@@ -917,7 +977,10 @@ def _render_overview(conn, upload: dict) -> None:
     src = Counter(i["source"] for i in issues)
     summary = recurrence.recurrence_summary(conn, uid)
 
-    st.markdown('<div class="page-title">Dashboard</div>', unsafe_allow_html=True)
+    title, action = st.columns([5, 1], vertical_alignment="bottom")
+    title.markdown('<div class="page-title">Dashboard</div>', unsafe_allow_html=True)
+    if action.button("Reports", icon=":material/summarize:", width="stretch", key="open_reports"):
+        _report_dialog(conn, upload)
 
     k = st.columns(4)
     k[0].markdown(ui.kpi_card("Data quality score", f"{overall:.0f}/100",

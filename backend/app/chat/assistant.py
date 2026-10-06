@@ -157,6 +157,40 @@ def answer(conn: psycopg.Connection, upload: dict, question: str, history: list[
     return client.chat(SYSTEM_PROMPT, messages, temperature=0.1, max_tokens=700).strip()
 
 
+REPORT_PROMPT = """\
+You write data quality reports for non-technical staff and managers at a \
+Sri Lankan distribution business. Write ONLY from the context provided \
+(profile statistics, schema documentation, audit results, selected issues \
+and the conversation). Never invent numbers; if something the reader asked \
+for is not in the context, say so in one sentence.
+
+Format the report in Markdown: start with a "# " title, use "## " section \
+headings, short paragraphs, "- " bullet points, **bold** for key facts, and \
+at most one simple pipe table when it helps. Plain business English, no \
+database jargon. Finish with a short "## Recommended next steps" section.
+"""
+
+REPORT_SUGGESTIONS = [
+    "A one-page summary of this audit for the managing director",
+    "A report on the high-severity issues with a clear action plan",
+    "A report for the data-entry team: what to check and how to avoid these errors",
+]
+
+
+def write_report(conn: psycopg.Connection, upload: dict, instruction: str,
+                 issues: list[dict] | None = None, history: list[dict] | None = None,
+                 client: LLMClient | None = None) -> str:
+    """An AI-written custom report (Markdown) following the user's instruction."""
+    client = client or LLMClient()
+    context = build_context(conn, upload, issues or [])
+    convo = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in (history or [])[-HISTORY_TURNS:])
+    user = (f"CONTEXT:\n{context}\n\n"
+            + (f"CONVERSATION SO FAR:\n{convo}\n\n" if convo else "")
+            + f"WRITE THIS REPORT: {instruction.strip()}")
+    return client.chat(REPORT_PROMPT, [{"role": "user", "content": user}],
+                       temperature=0.2, max_tokens=2200).strip()
+
+
 def save_turn(conn: psycopg.Connection, upload_id: int, role: str, content: str,
               issue_id: int | None = None, username: str | None = None) -> None:
     conn.execute(

@@ -41,7 +41,7 @@ provided. If a question needs data that is not included, say so clearly \
 instead of guessing. Never invent numbers. Do not write SQL or code.
 
 Write in plain business English, short paragraphs or a few bullet points, \
-no database jargon. Column names like col_3 may have a friendly name in \
+no database jargon. Do not use markdown headings; use **bold** labels instead. Column names like col_3 may have a friendly name in \
 brackets; use the friendly name when there is one. Some values appear as \
 MASK_xxxx because they were hidden for privacy; never guess them.
 """
@@ -99,7 +99,7 @@ def _audit_summary(issues: list[dict], aliases: dict) -> str:
 
 def _issue_detail(conn: psycopg.Connection, issue: dict, aliases: dict) -> str:
     lines = [
-        "SELECTED ISSUE:",
+        f"SELECTED ISSUE #{issue['id']}:",
         _issue_line(issue, aliases),
         f"What was found: {issue.get('description') or ''}",
         f"Recommendation: {issue.get('recommendation') or ''}",
@@ -114,14 +114,18 @@ def _issue_detail(conn: psycopg.Connection, issue: dict, aliases: dict) -> str:
     return "\n".join(lines)
 
 
-def build_context(conn: psycopg.Connection, upload: dict, issue: dict | None = None) -> str:
+def build_context(conn: psycopg.Connection, upload: dict, issue: dict | list[dict] | None = None) -> str:
+    """Context for one question. `issue` may be one issue or several (a
+    thread can discuss a group of issues together)."""
     client = upload["source_client"]
     aliases = display_aliases(conn, client)
     issues = repository.fetch_issues(conn, upload["id"])
-    if issue:
+    focus = [issue] if isinstance(issue, dict) else list(issue or [])
+    if focus:
         rels = repository.fetch_relationships(conn, upload["id"])
-        tables = {issue["table_name"]} | {
-            r["parent_table"] for r in rels if r["child_table"] == issue["table_name"] and r["confirmed"]
+        focus_tables = {i["table_name"] for i in focus}
+        tables = focus_tables | {
+            r["parent_table"] for r in rels if r["child_table"] in focus_tables and r["confirmed"]
         }
     else:
         tables = {r[0] for r in conn.execute(
@@ -136,13 +140,13 @@ def build_context(conn: psycopg.Connection, upload: dict, issue: dict | None = N
     if docs:
         parts.append("\n\n".join(docs))
     parts.append("AUDIT RESULTS:\n" + _audit_summary(issues, aliases))
-    if issue:
-        parts.append(_issue_detail(conn, issue, aliases))
+    for i in focus:
+        parts.append(_issue_detail(conn, i, aliases))
     return "\n\n".join(parts)
 
 
 def answer(conn: psycopg.Connection, upload: dict, question: str, history: list[dict],
-           issue: dict | None = None, client: LLMClient | None = None) -> str:
+           issue: dict | list[dict] | None = None, client: LLMClient | None = None) -> str:
     """One answer. history = prior turns [{role, content}], oldest first."""
     client = client or LLMClient()
     context = build_context(conn, upload, issue)

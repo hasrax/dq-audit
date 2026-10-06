@@ -49,6 +49,7 @@ from app.rules.describe import CATEGORY_LABEL
 from app.monitoring import recurrence
 from app.llm import feedback
 from app.chat import assistant
+from app.chat import threads as chat_threads
 from app.auth import users as auth
 from app.llm import selection as llm_selection
 from app.aliases import base_client
@@ -262,7 +263,9 @@ def main() -> None:
     with st.sidebar.expander(f"ℹ️ About {APP_NAME}"):
         st.markdown(ABOUT_MD)
 
-    if admin and st.button("＋  Import", key="fab", help="Upload a new export and run an audit"):
+    # floating import action; not on Ask, where it would cover the message box
+    if admin and navigation.url_path != "ask" and st.button("＋  Import", key="fab",
+                                                            help="Upload a new export and run an audit"):
         _import_dialog(conn)
     navigation.run()
 
@@ -488,70 +491,112 @@ def _evidence_text(rule: dict) -> str:
     return "Evidence — " + " · ".join(bits) if bits else "Evidence — none recorded"
 
 
-GENERAL = 0  # selectbox sentinel: a None option would render as an empty placeholder
 GENERAL_STARTERS = [
     "What are the most serious problems in this audit?",
     "Which table should we fix first, and why?",
     "Explain the data quality score in simple terms.",
 ]
 ISSUE_STARTERS = [
-    "Explain this issue in simple terms.",
-    "Why does this matter for the business?",
-    "How should we fix it?",
+    "Explain these issues in simple terms.",
+    "Why do they matter for the business?",
+    "How should we fix them, step by step?",
 ]
 
 
 def _issue_option_label(issue: dict, aliases: dict) -> str:
     col = display_columns(aliases, issue["table_name"], issue["column_name"])
     where = issue["table_name"] + (f".{col}" if col else "")
-    return f"#{issue['id']} · {where} · {issue['dimension']} · {issue['severity']}"
+    return f"#{issue['id']} · {where} · {issue['dimension'].replace('_', ' ')} · {issue['severity']}"
+
+
+def _open_issue_thread(conn, issue: dict, aliases: dict) -> None:
+    """Start a thread about one issue and make it the active one."""
+    col = display_columns(aliases, issue["table_name"], issue["column_name"])
+    title = f"Issue #{issue['id']} · {issue['table_name']}" + (f".{col}" if col else "")
+    tid = chat_threads.create_thread(conn, issue["source_client"], _username(), title, [issue["id"]])
+    st.session_state[f"chat_thread_{issue['source_client']}"] = tid
 
 
 def _render_chat(conn, upload: dict) -> None:
-    uid = upload["id"]
-    username = st.session_state.get("username")
-    st.markdown("#### Ask about this audit")
-    st.caption(
-        "Ask in plain English about a specific issue or about your data in general. The assistant "
-        "answers only from this audit's results, statistics and verified descriptions — it never sees "
-        "your full data, and it will say so when a question can't be answered from what it has."
-    )
+    uid, client = upload["id"], upload["source_client"]
+    username = _username()
+    aliases = _aliases(conn, client)
+    key = f"chat_thread_{client}"
 
-    issues = repository.fetch_issues(conn, uid)
-    aliases = _aliases(conn, upload["source_client"])
-    by_id = {i["id"]: i for i in issues}
-    key = f"chat_issue_{uid}"
-    if st.session_state.get(key) not in by_id:
-        st.session_state[key] = GENERAL
-    choice = st.selectbox(
-        "Ask about",
-        [GENERAL, *by_id],
-        key=key,
-        format_func=lambda i: "This audit in general" if i == GENERAL else _issue_option_label(by_id[i], aliases),
-    )
-    issue = by_id.get(choice)
-    issue_id = issue["id"] if issue else None
+    st.markdown('<div class="page-title">Ask</div>', unsafe_allow_html=True)
+    st.caption("Plain-English answers about this company's audits. The assistant only uses the audit results, "
+               "statistics and verified descriptions — never your full data — and says so when it can't answer.")
 
-    turns = assistant.fetch_turns(conn, uid, issue_id, username)
-    starters = ISSUE_STARTERS if issue else GENERAL_STARTERS
-    picked = st.pills("Try asking", starters, key=f"starter_{uid}_{issue_id}_{len(turns)}")
+    threads = chat_threads.list_threads(conn, client, username)
+    ids = {t["id"] for t in threads}
+    if st.session_state.get(key) not in ids:
+        st.session_state[key] = threads[0]["id"] if threads else None
+    active = st.session_state[key]
 
-    with st.container(border=True, height=440):
-        if not turns:
-            st.caption("No questions yet in this conversation.")
-        for t in turns:
-            with st.chat_message(t["role"], avatar="🧑" if t["role"] == "user" else "🔍"):
-                st.markdown(t["content"])
+    side, main = st.columns([1, 3], gap="medium")
+    with side.container(border=True, height=620):
+        if st.button("New chat", icon=":material/add:", type="primary", width="stretch", key="chat_new"):
+            st.session_state[key] = chat_threads.create_thread(conn, client, username)
+            st.rerun()
+        if not threads:
+            st.caption("No chats yet. Ask a question to start one.")
+        for t in threads:
+            label = t["title"] if len(t["title"]) <= 34 else t["title"][:33] + "…"
+            if st.button(label, key=f"thread_{t['id']}", width="stretch",
+                         type="secondary" if t["id"] == active else "tertiary",
+                         help=f"{t['message_count']} message(s) · {t['updated_at']:%d %b %H:%M}"):
+                st.session_state[key] = t["id"]
+                st.rerun()
 
-    question = st.chat_input("Type your question…", key=f"chat_input_{uid}") or picked
+    with main:
+        audit_issues = repository.fetch_issues(conn, uid)
+        attached = chat_threads.thread_issues(conn, active) if active else []
+        options = {i["id"]: i for i in audit_issues} | {i["id"]: i for i in attached}
+        head, tools = st.columns([5, 1.2], vertical_alignment="bottom")
+        chosen = head.multiselect(
+            "Issues in this chat", list(options), default=[i["id"] for i in attached],
+            format_func=lambda i: _issue_option_label(options[i], aliases),
+            placeholder="General question about this audit — or pick issues to discuss",
+            key=f"chat_issues_{active}",
+        )
+        if active and tools.button("Archive", icon=":material/archive:", key=f"chat_archive_{active}",
+                                   width="stretch", help="Hide this chat from the list"):
+            chat_threads.archive_thread(conn, active)
+            st.session_state[key] = None
+            st.rerun()
+        if active and set(chosen) != {i["id"] for i in attached}:
+            for i in set(chosen) - {i["id"] for i in attached}:
+                chat_threads.attach_issue(conn, active, i)
+            for i in {i["id"] for i in attached} - set(chosen):
+                chat_threads.detach_issue(conn, active, i)
+            st.rerun()
+        focus = [options[i] for i in chosen]
+
+        history = chat_threads.messages(conn, active) if active else []
+        with st.container(border=True, height=430):
+            if not history:
+                st.markdown('<div class="card-sub">Ask anything about this audit — for example what to fix '
+                            'first, what an issue means, or how to explain the results to a manager.</div>',
+                            unsafe_allow_html=True)
+            for m in history:
+                with st.chat_message(m["role"], avatar=":material/person:" if m["role"] == "user"
+                                     else ":material/auto_awesome:"):
+                    st.markdown(m["content"])
+        picked = st.pills("Suggestions", ISSUE_STARTERS if focus else GENERAL_STARTERS,
+                          key=f"starter_{active}_{len(history)}", label_visibility="collapsed")
+
+    question = st.chat_input("Ask a question…", key=f"chat_input_{client}") or picked
     if question:
-        assistant.save_turn(conn, uid, "user", question, issue_id, username)
+        if not active:
+            active = chat_threads.create_thread(conn, client, username, issue_ids=[i["id"] for i in focus])
+            st.session_state[key] = active
+        chat_threads.add_message(conn, active, uid, "user", question, username)
         with st.spinner("Thinking…"):
             try:
-                reply = assistant.answer(conn, upload, question, [dict(t) for t in turns], issue)
+                reply = assistant.answer(conn, upload, question, [dict(m) for m in history], focus)
             except Exception as exc:  # noqa: BLE001 -- show the problem instead of crashing the page
                 reply = f"Sorry — the assistant is unavailable right now ({exc.__class__.__name__}). Please try again."
-        assistant.save_turn(conn, uid, "assistant", reply, issue_id, username)
+        chat_threads.add_message(conn, active, uid, "assistant", reply, username)
         st.rerun()
 
 
@@ -1437,7 +1482,7 @@ def _issue_dialog(conn, issue_id: int) -> None:
             st.session_state["flash"] = f"Issue #{issue_id} marked {ui.STATUS[status][0].lower()}"
             st.rerun()
     if b[3].button("Discuss in chat", key=f"dlg_chat_{issue_id}", icon=":material/forum:", width="stretch"):
-        st.session_state[f"chat_issue_{issue['upload_id']}"] = issue_id
+        _open_issue_thread(conn, issue, aliases)
         st.switch_page(st.session_state["_pages"]["ask"])
     if issue["status"] != "flagged":
         st.caption(f"Currently **{ui.STATUS[issue['status']][0].lower()}**"

@@ -164,6 +164,12 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 .issue-trend {{ margin-top: 8px; font-size: .88rem; line-height: 1.5; color: var(--text); }}
 .issue-trend .est {{ color: var(--muted); font-style: italic; }}
 
+/* chat */
+[data-testid="stChatMessage"] h1, [data-testid="stChatMessage"] h2, [data-testid="stChatMessage"] h3 {{
+  font-size: 1.02rem !important; margin: 10px 0 4px 0 !important; }}
+[class*="st-key-thread_"] button {{ justify-content: flex-start; text-align: left; }}
+[class*="st-key-thread_"] button p {{ text-align: left; }}
+
 /* compact issue rows (triage list) */
 .issue-row {{ background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--sev, {MUTED});
   border-radius: 12px; padding: 10px 14px; }}

@@ -284,6 +284,7 @@ def main() -> None:
     reviewed = sum(counts.get(s, 0) for s in ("accepted", "rejected", "considered"))
 
     _render_header(upload, counts, total, reviewed)
+    navigation = _build_navigation(conn, upload, admin)
 
     st.sidebar.markdown("### Triage progress")
     s1, s2 = st.sidebar.columns(2)
@@ -296,25 +297,57 @@ def main() -> None:
     with st.sidebar.expander(f"ℹ️ About {APP_NAME}"):
         st.markdown(ABOUT_MD)
 
-    # Reviewer: triage, chat, export (+ read-only views). Admin: everything.
-    pages = [
-        (":material/dashboard: Overview", lambda: _render_overview(conn, upload)),
-        (":material/fact_check: Triage", lambda: _render_triage(conn, upload)),
-        (":material/forum: Ask", lambda: _render_chat(conn, upload)),
-        (":material/rule: Rules", lambda: _render_rules(conn, upload)),
-        (":material/monitoring: Scores & trend", lambda: _render_scores(conn, upload)),
-        (":material/account_tree: Relationships", lambda: _render_relationships(conn, upload)),
-    ]
-    if admin:
-        pages[1:1] = [(":material/upload_file: New audit", lambda: _render_upload(conn))]
-        pages += [
-            (":material/menu_book: Schema review", lambda: _render_schema_review(conn, upload)),
-            (":material/domain: Organisation", lambda: _render_organisation(conn, upload)),
-            (":material/settings: Settings", lambda: _render_settings(conn)),
-        ]
-    for tab, (_, render) in zip(st.tabs([label for label, _ in pages]), pages):
-        with tab:
-            render()
+    navigation.run()
+
+
+# url path -> (title, material icon, section); order = sidebar order.
+PAGE_SPECS = {
+    "overview": ("Overview", "dashboard", "Review"),
+    "triage": ("Triage", "fact_check", "Review"),
+    "ask": ("Ask", "forum", "Review"),
+    "rules": ("Rules", "rule", "Understand"),
+    "scores": ("Scores & trend", "monitoring", "Understand"),
+    "relationships": ("Relationships", "account_tree", "Understand"),
+    "new-audit": ("New audit", "upload_file", "Administration"),
+    "schema": ("Schema review", "menu_book", "Administration"),
+    "organisation": ("Organisation", "domain", "Administration"),
+    "settings": ("Settings", "settings", "Administration"),
+}
+ADMIN_PAGES = {"new-audit", "schema", "organisation", "settings"}
+
+
+def _build_navigation(conn, upload: dict, admin: bool):
+    """Sidebar navigation that renders only the selected page.
+
+    st.tabs would execute every page on every click; on a small hosted
+    server that makes each interaction slow. The start page can be set
+    with ?page=<path> (or session_state["start_page"] in tests).
+    """
+    renderers = {
+        "overview": lambda: _render_overview(conn, upload),
+        "triage": lambda: _render_triage(conn, upload),
+        "ask": lambda: _render_chat(conn, upload),
+        "rules": lambda: _render_rules(conn, upload),
+        "scores": lambda: _render_scores(conn, upload),
+        "relationships": lambda: _render_relationships(conn, upload),
+        "new-audit": lambda: _render_upload(conn),
+        "schema": lambda: _render_schema_review(conn, upload),
+        "organisation": lambda: _render_organisation(conn, upload),
+        "settings": lambda: _render_settings(conn),
+    }
+    start = st.session_state.get("start_page") or st.query_params.get("page") or "overview"
+    allowed = [k for k in PAGE_SPECS if admin or k not in ADMIN_PAGES]
+    if start not in allowed:
+        start = "overview"
+    sections: dict[str, list] = {}
+    pages = {}
+    for key in allowed:
+        title, icon, section = PAGE_SPECS[key]
+        pages[key] = st.Page(renderers[key], title=title, icon=f":material/{icon}:",
+                             url_path=key, default=(key == start))
+        sections.setdefault(section, []).append(pages[key])
+    st.session_state["_pages"] = pages
+    return st.navigation(sections, position="sidebar")
 
 
 FILTER_LABELS = {"rule": "Rules", "llm": "AI", "flagged": "To review", "yes": "Yes", "no": "No"}
@@ -1312,7 +1345,7 @@ def _render_issue_card(
         _decide(conn, issue["id"], "considered")
     if b4.button("💬 Ask about this", key=f"ask_{issue['id']}", width="stretch"):
         st.session_state[f"chat_issue_{issue['upload_id']}"] = issue["id"]
-        st.toast("Open the 💬 Ask tab to ask about this issue", icon="💬")
+        st.switch_page(st.session_state["_pages"]["ask"])
 
     with st.expander("📝 Add a note"):
         note = st.text_area(

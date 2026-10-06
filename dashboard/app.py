@@ -20,9 +20,15 @@ from pathlib import Path
 
 # Make the backend package importable without installing it.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+# dashboard/theme.py. Appended, not prepended: first on the path, this
+# folder's app.py would shadow the backend's `app` package.
+sys.path.append(str(Path(__file__).resolve().parent))
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
+
+import theme as ui
 
 from app.aliases import client_label, display_columns, load_client_labels
 from app.db import repository
@@ -46,6 +52,7 @@ from app.chat import assistant
 from app.auth import users as auth
 from app.llm import selection as llm_selection
 from app.aliases import base_client
+from app import workspaces as ws
 
 # Temporary working name — change these two lines to rebrand the whole app.
 APP_NAME = "ClarityDQ"
@@ -77,81 +84,15 @@ become the ground truth that measures the tool's own precision.
 DIMENSIONS = ["completeness", "validity", "consistency", "uniqueness", "timeliness", "cross_table", "accuracy"]
 STATUSES = ["flagged", "accepted", "rejected", "considered"]
 STATUS_LABEL = {"flagged": "⚪ Flagged", "accepted": "✅ Accepted", "rejected": "❌ Rejected", "considered": "🤔 Considered"}
-# Pill colours all reach >= 4.5:1 contrast with white text (WCAG AA).
-SEVERITY_COLOR = {"high": "#B42318", "medium": "#B54708", "low": "#475467"}
-SOURCE_STYLE = {"rule": ("Rule · Type 1", "#1D4ED8"), "llm": ("AI · Type 2", "#6941C6")}
-GOOD, BAD, NEUTRAL, MUTED = "#067647", "#B42318", "#475467", "#475467"
+SEVERITY_COLOR = ui.SEVERITY
+SOURCE_STYLE = ui.SOURCE
 ALL = "(all)"
-TREND_STYLE = {
-    "new": ("NEW", "#1F5FAD"),
-    "worsening": ("▲ WORSENING", "#B42318"),
-    "improving": ("▼ IMPROVING", "#067647"),
-    "stable": ("■ STABLE", "#475467"),
-}
+TREND_STYLE = ui.TREND
 TRENDS = ["new", "recurring", "worsening", "improving", "stable"]
 
-CSS = """
-<style>
-.issue-card {
-  border: 1px solid rgba(128,128,128,0.25);
-  border-left: 5px solid var(--sev, #475467);
-  border-radius: 10px;
-  padding: 14px 18px 12px 18px;
-  margin: 4px 0 6px 0;
-  background: #FFFFFF;
-  box-shadow: 0 1px 2px rgba(16,24,40,0.04);
-}
-.issue-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
-.issue-title { font-size: 1.06rem; font-weight: 700; color: #101828; }
-.issue-title .col { font-weight: 500; color: #475467; }
-.issue-desc { margin-top: 8px; font-size: 1rem; line-height: 1.5; color: #1D2939; }
-.issue-rec  { margin-top: 8px; font-size: 0.93rem; line-height: 1.45; color: #344054;
-              background: #F4F6F9; border-radius: 6px; padding: 6px 10px; }
-.issue-meta { margin-top: 8px; font-size: 0.82rem; color: #475467; }
-.issue-trend { margin-top: 8px; font-size: 0.88rem; line-height: 1.5; color: #344054; }
-.issue-trend .est { color: #475467; font-style: italic; }
-.rule-card {
-  border: 1px solid #E4E7EC;
-  border-left: 5px solid var(--accent, #067647);
-  border-radius: 10px; padding: 12px 16px 10px 16px; margin: 0 0 4px 0; background: #FFFFFF;
-}
-.rule-what { font-size: 1.0rem; font-weight: 650; line-height: 1.45; margin-top: 6px; color: #101828; }
-.rule-why  { margin-top: 4px; font-size: 0.93rem; line-height: 1.5; color: #344054; }
-.rule-ev   { margin-top: 6px; font-size: 0.8rem; color: #475467; }
-.pills { display:flex; gap:6px; flex-wrap:wrap; }
-.pill {
-  display:inline-block; padding: 2px 10px; border-radius: 999px;
-  font-size: 0.75rem; font-weight: 700; color: #fff; white-space: nowrap; letter-spacing: 0.2px;
-}
-.pill-outline {
-  background: #FFFFFF; color: #344054;
-  border: 1px solid #D0D5DD; font-weight: 600;
-}
-.context-line { font-size: 0.92rem; color: #475467; margin: -4px 0 6px 0; }
-.context-line b { color: #101828; }
-.hero { text-align:center; padding: 8px 0 6px 0; }
-.hero-num { font-size: 4.2rem; font-weight: 800; line-height: 1; }
-.hero-max { font-size: 1.4rem; font-weight: 600; color: #667085; }
-.hero-label { font-size: 0.9rem; color: #475467; letter-spacing: 0.4px; text-transform: uppercase; }
-.meter { margin: 10px 0; }
-.meter-top { display:flex; justify-content:space-between; font-size:0.9rem; margin-bottom:4px; }
-.meter-label { font-weight:600; }
-.meter-val { font-weight:800; }
-.meter-track { height:12px; border-radius:999px; background:rgba(128,128,128,0.18); overflow:hidden; }
-.meter-fill { height:100%; border-radius:999px; }
-.topbar {
-  display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
-  padding:2px 0 12px 0; margin-bottom:14px;
-  border-bottom:2px solid rgba(37,99,235,0.35);
-}
-.topbar .brand { font-size:1.7rem; font-weight:800; letter-spacing:0.3px; }
-.topbar .brand .mark { color:#2563eb; }
-.topbar .tagline { font-size:0.9rem; opacity:0.6; }
-</style>
-"""
+
 
 SCORE_GOOD, SCORE_WARN = 80, 50
-TREND_HUE = "#3b82f6"
 DIMENSION_ROWS = [
     ("Completeness", "completeness_score"),
     ("Validity", "validity_score"),
@@ -164,10 +105,10 @@ DIMENSION_ROWS = [
 
 def _status_color(value: float) -> str:
     if value >= SCORE_GOOD:
-        return GOOD
+        return ui.SAGE
     if value >= SCORE_WARN:
-        return "#B54708"
-    return BAD
+        return ui.MUSTARD
+    return ui.CORAL
 
 
 @st.cache_resource
@@ -189,11 +130,11 @@ def _none_if_all(value: str) -> str | None:
 
 
 def _pill(text: str, color: str) -> str:
-    return f'<span class="pill" style="background:{color}">{html.escape(text)}</span>'
+    return ui.pill(text, color)
 
 
 def _outline_pill(text: str) -> str:
-    return f'<span class="pill pill-outline">{html.escape(text)}</span>'
+    return f'<span class="pill-outline">{html.escape(text)}</span>'
 
 
 def _current_user() -> dict | None:
@@ -246,44 +187,68 @@ def _render_account_sidebar() -> None:
 
 def main() -> None:
     st.set_page_config(page_title=APP_NAME, page_icon="🔍", layout="wide")
-    st.markdown(CSS, unsafe_allow_html=True)
+    ui.apply(st.context.theme.type)  # follows the viewer's Light / Dark setting
+    st.markdown(ui.css(), unsafe_allow_html=True)
     conn = get_conn()
     repository.apply_schema(conn)
 
-    st.markdown(
-        f'<div class="topbar"><span class="brand">🔍 <span class="mark">{APP_NAME}</span></span>'
-        f'<span class="tagline">{APP_TAGLINE}</span></div>',
-        unsafe_allow_html=True,
-    )
-
+    brand = (f'<div class="brand"><div class="logo"></div><div><div class="name">{APP_NAME}</div>'
+             f'<div class="tag">{APP_TAGLINE}</div></div></div>')
     if _current_user() is None:
+        st.markdown(brand, unsafe_allow_html=True)
         _render_login(conn)
         return
+    static = Path(__file__).resolve().parent / "static"
+    st.logo(str(static / f"logo-{ui.MODE}.svg"), size="large", icon_image=str(static / "icon.svg"))
     _render_account_sidebar()
     admin = _is_admin()
 
-    uploads = repository.list_uploads(conn)
-    if not uploads:
+    ws.sync_from_uploads(conn)
+    ws.refresh_names(conn)
+    companies = ws.list_workspaces(conn)
+    if not companies:
+        st.markdown('<div class="page-title">Welcome</div>', unsafe_allow_html=True)
         if admin:
-            st.info("No audits yet — upload an export below to run the first one.")
-            _render_upload(conn)
+            st.info("No companies yet. Click **＋ Import** to create one and run its first audit.")
+            if st.button("＋  Import", key="fab"):
+                _import_dialog(conn)
         else:
-            st.info("No audits yet. An administrator needs to run the first audit.")
+            st.info("No audits yet. An administrator needs to import the first export.")
         return
 
-    upload_labels = {
-        f"#{u['id']} · {client_label(u['source_client'])} · {u['pending_count']}/{u['issue_count']} pending": u
-        for u in uploads
-    }
-    chosen = st.sidebar.selectbox("Audit run", list(upload_labels))
-    upload = upload_labels[chosen]
-    uid = upload["id"]
+    by_slug = {c["slug"]: c for c in companies}
+    if st.session_state.get("workspace") not in by_slug:
+        st.session_state["workspace"] = companies[0]["slug"]
+    slug = st.sidebar.selectbox(
+        "Company", list(by_slug), key="workspace",
+        format_func=lambda k: f"{by_slug[k]['name']}  ·  {by_slug[k]['audit_count']} audit(s)",
+    )
+    uploads = repository.list_uploads(conn, source_client=slug)
+    if not uploads:
+        st.markdown(f'<div class="page-title">{html.escape(by_slug[slug]["name"])}</div>', unsafe_allow_html=True)
+        st.info("No audits for this company yet." + (" Click **＋ Import** to run the first one." if admin else ""))
+        if admin and st.button("＋  Import", key="fab"):
+            _import_dialog(conn)
+        return
+
+    by_id = {u["id"]: u for u in uploads}
+    audit_key = f"audit_{slug}"
+    if st.session_state.get(audit_key) not in by_id:
+        st.session_state[audit_key] = uploads[0]["id"]
+    uid = st.sidebar.selectbox(
+        "Audit", list(by_id), key=audit_key,
+        format_func=lambda i: (f"#{i} · data as of {(by_id[i]['data_as_of'] or by_id[i]['upload_date']):%d %b %Y}"
+                               f" · {by_id[i]['pending_count']}/{by_id[i]['issue_count']} to review"),
+    )
+    upload = by_id[uid]
 
     counts = repository.triage_counts(conn, uid)
     total = upload["issue_count"]
     reviewed = sum(counts.get(s, 0) for s in ("accepted", "rejected", "considered"))
 
     _render_header(upload, counts, total, reviewed)
+    if st.session_state.get("flash"):
+        st.toast(st.session_state.pop("flash"), icon=":material/check_circle:")
     navigation = _build_navigation(conn, upload, admin)
 
     st.sidebar.markdown("### Triage progress")
@@ -297,7 +262,14 @@ def main() -> None:
     with st.sidebar.expander(f"ℹ️ About {APP_NAME}"):
         st.markdown(ABOUT_MD)
 
+    if admin and st.button("＋  Import", key="fab", help="Upload a new export and run an audit"):
+        _import_dialog(conn)
     navigation.run()
+
+
+@st.dialog("Import an export and run an audit", width="large")
+def _import_dialog(conn) -> None:
+    _render_upload(conn, in_dialog=True)
 
 
 # url path -> (title, material icon, section); order = sidebar order.
@@ -448,6 +420,23 @@ def _render_settings(conn) -> None:
         st.rerun()
     if len(options) == 1:
         st.caption("Only one option is configured. Add more with LLM_OPTIONS in backend/.env.")
+
+    st.markdown("#### Companies")
+    st.caption("Each company is a folder of its imports. Rename one at any time — audits and history stay attached.")
+    for c in ws.list_workspaces(conn):
+        with st.form(f"ws_{c['slug']}", border=False):
+            a, b, d = st.columns([2.4, 1.6, 0.9])
+            new = a.text_input("Name", value=c["name"], key=f"ws_name_{c['slug']}", label_visibility="collapsed")
+            last = f"{c['last_as_of']:%d %b %Y}" if c["last_as_of"] else "no audits yet"
+            b.markdown(f'<div class="card-sub" style="padding-top:8px">{c["audit_count"]} audit(s) · latest {last}</div>',
+                       unsafe_allow_html=True)
+            if d.form_submit_button("Rename", width="stretch") and new.strip() != c["name"]:
+                try:
+                    ws.rename_workspace(conn, c["slug"], new)
+                    st.toast(f"Renamed to {new.strip()}", icon=":material/edit:")
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
 
     st.markdown("#### People")
     people = auth.list_users(conn)
@@ -616,14 +605,14 @@ def _render_rules(conn, upload: dict) -> None:
     for r in rules:
         broken = r["violation_count"]
         off = r["rule_key"] in suppressed
-        accent = "#98a2b3" if off else (BAD if broken else GOOD)
+        accent = ui.FAINT if off else (ui.CORAL if broken else ui.SAGE)
         if off:
             s_row = suppressed[r["rule_key"]]
             badge = _pill(f"Not applicable · {s_row['disabled_by'] or 'admin'}, {s_row['disabled_at']:%d %b}", "#667085")
         elif broken:
-            badge = _pill(f"⚠ {broken:,} row(s) break this rule", BAD)
+            badge = _pill(f"⚠ {broken:,} row(s) break this rule", ui.CORAL)
         else:
-            badge = _pill("✓ Passed", GOOD)
+            badge = _pill("✓ Passed", ui.SAGE)
         st.markdown(
             f'''<div class="rule-card" style="--accent:{accent}">
   <div class="issue-head"><span class="pills">{_outline_pill(CATEGORY_LABEL.get(r["category"], r["category"]))}{_outline_pill(r["table_name"])}</span>
@@ -885,55 +874,105 @@ def _render_overview(conn, upload: dict) -> None:
     tm = compute_triage_metrics(issues)
     total = len(issues)
     overall = score["overall_score"]
-    color = _status_color(overall)
-
-    st.caption(f"{upload['row_count']:,} rows audited")
-
-    top = st.columns([1.5, 1, 1, 1])
-    top[0].markdown(
-        f'<div style="font-size:2.8rem;font-weight:800;color:{color};line-height:1">'
-        f'{overall:.0f}<span style="font-size:1rem;opacity:0.5">/100</span></div>'
-        f'<div style="opacity:0.6;font-size:0.78rem;letter-spacing:0.4px">DATA QUALITY SCORE</div>',
-        unsafe_allow_html=True,
-    )
-    top[1].metric("Total issues", f"{total:,}")
-    top[2].metric("Pending triage", tm["by_status"]["flagged"])
-    top[3].metric("Reviewed", tm["reviewed"])
-
-    if total:
-        st.progress(tm["reviewed"] / total, text=f"{tm['reviewed']} of {total} issues reviewed")
-
     sev = Counter(i["severity"] for i in issues)
     src = Counter(i["source"] for i in issues)
-    row = st.columns(4)
-    row[0].metric("🔴 High", sev.get("high", 0))
-    row[1].metric("🟠 Medium", sev.get("medium", 0))
-    row[2].metric("⚪ Low", sev.get("low", 0))
-    row[3].metric("⚙️ Rules / 🤖 AI", f"{src.get('rule', 0)} / {src.get('llm', 0)}")
+    summary = recurrence.recurrence_summary(conn, uid)
 
-    _render_recurrence_summary(conn, upload)
+    st.markdown('<div class="page-title">Dashboard</div>', unsafe_allow_html=True)
+
+    k = st.columns(4)
+    k[0].markdown(ui.kpi_card("Data quality score", f"{overall:.0f}/100",
+                              f"{upload['row_count']:,} rows audited", _status_color(overall)),
+                  unsafe_allow_html=True)
+    k[1].markdown(ui.kpi_card("Waiting for review", f"{tm['by_status']['flagged']:,}",
+                              f"{tm['reviewed']} of {total} reviewed", ui.MUSTARD), unsafe_allow_html=True)
+    k[2].markdown(ui.kpi_card("High severity", f"{sev.get('high', 0):,}",
+                              f"{summary['worsening']} getting worse" if summary["has_previous"] else "first audit",
+                              ui.CORAL), unsafe_allow_html=True)
+    k[3].markdown(ui.kpi_card("Found by AI", f"{src.get('llm', 0):,}",
+                              f"{src.get('rule', 0):,} found by rules", ui.LAVENDER), unsafe_allow_html=True)
 
     if not total:
-        st.info("No issues recorded for this upload.")
+        st.info("No issues recorded for this audit.")
         return
 
-    left, right = st.columns(2)
-    with left:
-        st.markdown("##### Issues by dimension")
-        by_dim = Counter(DIMENSION_ALIASES.get(i["dimension"], i["dimension"]) for i in issues)
-        dim_df = (
-            pd.DataFrame({"dimension": list(by_dim), "issues": list(by_dim.values())})
-            .set_index("dimension").sort_values("issues", ascending=True)
+    left, right = st.columns([1, 2])
+    with left.container(border=True):
+        st.markdown('<div class="card-title">Issues by severity</div>', unsafe_allow_html=True)
+        order = ["high", "medium", "low"]
+        st.plotly_chart(
+            ui.donut([o.title() for o in order], [sev.get(o, 0) for o in order],
+                     [ui.CORAL, ui.MUSTARD, ui.MUTED], f"{total}", "issues"),
+            config={"displayModeBar": False}, width="stretch", key="donut_sev",
         )
-        st.bar_chart(dim_df, color=TREND_HUE, horizontal=True)
-    with right:
-        st.markdown("##### Most affected tables")
-        by_tbl = Counter(i["table_name"] for i in issues)
-        tbl_df = (
-            pd.DataFrame({"table": list(by_tbl), "issues": list(by_tbl.values())})
-            .set_index("table").sort_values("issues", ascending=True).tail(8)
+        st.markdown(
+            "".join(f'<div class="meter-top"><span>{ui.pill(o.title(), c)}</span>'
+                    f'<span class="meter-val">{sev.get(o, 0)}</span></div>'
+                    for o, c in zip(order, [ui.CORAL, ui.MUSTARD, ui.MUTED])),
+            unsafe_allow_html=True,
         )
-        st.bar_chart(tbl_df, color=TREND_HUE, horizontal=True)
+    with right.container(border=True):
+        trend = repository.fetch_score_trend(conn, upload["source_client"])
+        if len(trend) >= 2:
+            st.markdown('<div class="card-title">Data quality score over time</div>', unsafe_allow_html=True)
+            fig = go.Figure(go.Scatter(
+                x=[f"#{r['upload_id']}" for r in trend], y=[float(r["overall_score"]) for r in trend],
+                mode="lines+markers", line=dict(color=ui.SAGE, width=3, shape="spline"),
+                marker=dict(size=8, color=ui.SAGE), fill="tozeroy", fillcolor="rgba(143,201,180,0.12)",
+                hovertemplate="Audit %{x}: %{y:.0f}/100<extra></extra>",
+            ))
+            fig.update_yaxes(range=[0, 100])
+            fig.update_xaxes(type="category", title_text="audit")
+        else:
+            st.markdown('<div class="card-title">Issues by dimension</div>', unsafe_allow_html=True)
+            by_dim = Counter(DIMENSION_ALIASES.get(i["dimension"], i["dimension"]) for i in issues)
+            fig = go.Figure(go.Bar(x=list(by_dim.values()), y=list(by_dim), orientation="h",
+                                   marker=dict(color=ui.BLUE), hovertemplate="%{y}: %{x}<extra></extra>"))
+        st.plotly_chart(ui.style_figure(fig, height=318), config={"displayModeBar": False},
+                        width="stretch", key="trend_chart")
+
+    c1, c2 = st.columns([2, 1])
+    with c1.container(border=True):
+        st.markdown('<div class="card-title">Issues needing attention</div>', unsafe_allow_html=True)
+        aliases = _aliases(conn, upload["source_client"])
+        top = sorted(
+            (i for i in issues if i["status"] == "flagged"),
+            key=lambda i: ({"high": 0, "medium": 1}.get(i["severity"], 2), -(i.get("affected_row_count") or 0)),
+        )[:7]
+        rows = []
+        for i in top:
+            col = display_columns(aliases, i["table_name"], i["column_name"])
+            trend_pill = ui.pill(*ui.TREND[i["trend_status"]]) if i.get("trend_status") in ui.TREND else ""
+            rows.append(
+                f'<tr><td><span class="loc">{html.escape(i["table_name"])}</span>'
+                f'{f" <span class=col>· {html.escape(col)}</span>" if col else ""}</td>'
+                f'<td>{ui.pill(i["severity"].title(), ui.SEVERITY[i["severity"]])}</td>'
+                f'<td>{ui.pill(*ui.SOURCE[i["source"]])}</td>'
+                f'<td>{html.escape(i["dimension"].replace("_", " "))}</td>'
+                f'<td class="num">{(i.get("affected_row_count") or 0):,}</td><td>{trend_pill}</td></tr>'
+            )
+        st.markdown(
+            '<table class="itable"><tr><th>Where</th><th>Severity</th><th>Found by</th><th>Dimension</th>'
+            '<th class="num">Rows</th><th>Trend</th></tr>' + "".join(rows) + "</table>"
+            if rows else '<div class="card-sub">Everything has been reviewed. 🎉</div>',
+            unsafe_allow_html=True,
+        )
+        pages = st.session_state.get("_pages", {})
+        if "triage" in pages:
+            st.page_link(pages["triage"], label="Review all issues", icon=":material/arrow_forward:")
+    with c2.container(border=True):
+        st.markdown('<div class="card-title">Since the last audit</div>', unsafe_allow_html=True)
+        if not summary["has_previous"]:
+            st.markdown('<div class="card-sub">This is the first audit for this organisation. '
+                        'Trends appear from the second audit.</div>', unsafe_allow_html=True)
+        else:
+            for label, value, color in [
+                ("New issues", summary["new"], ui.BLUE), ("Recurring", summary["recurring"], ui.MUTED),
+                ("Getting worse", summary["worsening"], ui.CORAL), ("Improving", summary["improving"], ui.SAGE),
+                ("Not seen this time", summary["not_seen"], ui.LAVENDER),
+            ]:
+                st.markdown(f'<div class="meter-top" style="margin:10px 0"><span>{ui.pill(label, color)}</span>'
+                            f'<span class="meter-val">{value}</span></div>', unsafe_allow_html=True)
 
 
 def _render_recurrence_summary(conn, upload: dict) -> None:
@@ -970,8 +1009,8 @@ def _render_recurrence_summary(conn, upload: dict) -> None:
             )
 
 
-def _process_upload(files, client: str, run_llm: bool, draft_docs: bool) -> dict:
-    """Write uploaded CSVs to a temp dir and run the full audit pipeline.
+def _process_upload(files, client: str, run_llm: bool, draft_docs: bool, data_as_of=None) -> dict:
+    """Write uploaded files to a temp dir and run the full audit pipeline.
 
     Schema docs are drafted first so that, once verified, a later audit's
     LLM pass can use them; drafting only covers tables not yet documented.
@@ -985,61 +1024,75 @@ def _process_upload(files, client: str, run_llm: bool, draft_docs: bool) -> dict
     if run_llm:
         audited = audit_directory(tmp, source_client=client, prompt_log=prompt_log)
         llm_issues = [issue for table_issues in audited.values() for issue in table_issues]
-    result = persist_audit(tmp, source_client=client, llm_issues=llm_issues, prompt_log=prompt_log)
+    result = persist_audit(tmp, source_client=client, llm_issues=llm_issues, prompt_log=prompt_log,
+                           data_as_of=data_as_of, filename=", ".join(f.name for f in files)[:200])
     result["drafted_tables"] = len(drafted)
     return result
 
 
-NEW_CLIENT = "➕ New client…"
+NEW_COMPANY = "__new__"
 
 
-def _render_upload(conn) -> None:
-    st.markdown("#### Upload an ERP CSV export and run an audit")
+def _render_upload(conn, in_dialog: bool = False) -> None:
+    import datetime as _dt
+
+    if not in_dialog:
+        st.markdown('<div class="page-title">New audit</div>', unsafe_allow_html=True)
     st.caption(
-        "Files are headerless CSV exports. Upload related tables together "
-        "(e.g. a header + its detail table) so cross-table checks can run."
+        "Choose the company, add its export files (CSV or Excel — headerless ERP exports are fine) "
+        "and run the audit. Upload related tables together (e.g. an invoice header and its lines) so "
+        "cross-table checks can run."
     )
-    files = st.file_uploader("CSV file(s)", type=["csv"], accept_multiple_files=True)
-
-    labels = load_client_labels()
-    known = sorted({u["source_client"] for u in repository.list_uploads(conn)} | set(labels))
-    by_label = {client_label(c, labels): c for c in known}
-    picked = st.selectbox("Organisation", [*by_label, NEW_CLIENT])
-    if picked == NEW_CLIENT:
-        client = st.text_input("New client key", placeholder="e.g. company_d").strip()
-    else:
-        client = by_label[picked]
-
-    draft_docs = st.checkbox(
-        "Draft schema documentation with AI (tables not yet documented) — review it in the 📘 Schema review tab",
-        value=False,
+    companies = ws.list_workspaces(conn)
+    names = {c["slug"]: c["name"] for c in companies}
+    current = st.session_state.get("workspace")
+    options = [*names, NEW_COMPANY]
+    picked = st.selectbox(
+        "Company", options,
+        index=options.index(current) if current in names else (0 if names else len(options) - 1),
+        format_func=lambda k: "＋ New company…" if k == NEW_COMPANY else names[k],
+        key=f"imp_company_{in_dialog}",
     )
-    run_llm = st.checkbox(
-        "Also run AI contextual analysis (LLM) — slower; sends pseudonymized samples to the cloud model",
-        value=False,
-    )
+    new_name = ""
+    if picked == NEW_COMPANY:
+        new_name = st.text_input("New company name", placeholder="e.g. Sunrise Traders",
+                                 key=f"imp_new_{in_dialog}").strip()
 
-    if st.button("▶️ Run audit", type="primary", disabled=not (files and client)):
-        steps = ", ".join(
-            ["profiling", "running rules"]
-            + (["drafting schema docs"] if draft_docs else [])
-            + (["AI analysis"] if run_llm else [])
-            + ["scoring"]
-        )
-        with st.spinner(steps[0].upper() + steps[1:] + "…"):
+    c1, c2 = st.columns([1, 2])
+    as_of = c1.date_input("Data as of", value=_dt.date.today(), key=f"imp_asof_{in_dialog}",
+                          help="The date the export was taken. Imports are ordered by this date for trends.")
+    files = c2.file_uploader("Export files", type=["csv", "xlsx", "xls"], accept_multiple_files=True,
+                             key=f"imp_files_{in_dialog}")
+
+    run_llm = st.checkbox("Also run AI contextual analysis (finds issues rules can't; sends only masked samples)",
+                          value=True, key=f"imp_llm_{in_dialog}")
+    draft_docs = st.checkbox("Draft schema documentation with AI for new tables (review it in Schema review)",
+                             value=False, key=f"imp_docs_{in_dialog}")
+
+    ready = bool(files) and (picked != NEW_COMPANY or bool(new_name))
+    if st.button("Run audit", type="primary", disabled=not ready, icon=":material/play_arrow:",
+                 key=f"imp_run_{in_dialog}"):
+        try:
+            client = ws.create_workspace(conn, new_name, created_by=_username()) if picked == NEW_COMPANY else picked
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+        steps = ["profiling", "running rules"] + (["drafting schema docs"] if draft_docs else []) \
+            + (["AI analysis"] if run_llm else []) + ["scoring"]
+        with st.spinner(", ".join(steps).capitalize() + "… this can take a few minutes for large exports."):
             try:
-                result = _process_upload(files, client, run_llm, draft_docs)
+                result = _process_upload(files, client, run_llm, draft_docs, data_as_of=as_of)
             except Exception as exc:  # noqa: BLE001 -- surface any failure to the user
                 st.error(f"Audit failed: {exc}")
                 return
-        drafted = f" · schema docs drafted for {result['drafted_tables']} table(s)" if draft_docs else ""
-        st.success(
-            f"Audit complete — upload #{result['upload_id']}: "
-            f"{result['issues']} issues "
-            f"({result['rule_issues']} rule + {result['llm_issues']} LLM) · "
-            f"DQ score {result['overall_score']}/100{drafted}"
+        st.session_state["workspace"] = client
+        st.session_state[f"audit_{client}"] = result["upload_id"]
+        st.session_state["flash"] = (
+            f"Audit #{result['upload_id']} complete — {result['issues']} issues "
+            f"({result['rule_issues']} by rules, {result['llm_issues']} by AI) · "
+            f"data quality score {result['overall_score']:.0f}/100"
         )
-        st.info("Open the **Triage** or **Scores** tab and select this upload from the sidebar.")
+        st.rerun()
 
 
 def _render_scores(conn, upload: dict) -> None:
@@ -1090,7 +1143,7 @@ def _render_scores(conn, upload: dict) -> None:
         df = pd.DataFrame(
             [{"upload": f"#{r['upload_id']}", "DQ score": float(r["overall_score"])} for r in trend]
         ).set_index("upload")
-        st.line_chart(df, y="DQ score", color=TREND_HUE)
+        st.line_chart(df, y="DQ score", color=ui.BLUE)
     else:
         st.caption(
             f"Only one scored upload for **{client_label(upload['source_client'])}** so far — "
@@ -1286,7 +1339,7 @@ def _render_issue_card(
     if issue.get("trend_status") in TREND_STYLE:
         pills = _pill(*TREND_STYLE[issue["trend_status"]]) + pills
     if issue.get("fixable") == "yes":
-        pills += _pill("✓ Fixable", GOOD)
+        pills += _pill("✓ Fixable", ui.SAGE)
     elif issue.get("fixable") == "no":
         pills += _outline_pill("Not fixable")
     if issue["status"] != "flagged":

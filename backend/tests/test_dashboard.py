@@ -50,10 +50,11 @@ def test_every_admin_page_renders_without_error(page):
     assert any("ClarityDQ" in m.value for m in at.markdown)   # branded header
 
 
-def test_overview_renders_kpis():
+def test_dashboard_renders_kpi_cards():
     at = _app(page="overview")
-    assert any("Total issues" in m.label for m in at.metric)
-    assert "DATA QUALITY SCORE" in _text(at)
+    text = _text(at)
+    for label in ("Data quality score", "Waiting for review", "High severity", "Found by AI"):
+        assert label in text
 
 
 def test_scores_page_renders_overall_score():
@@ -70,10 +71,14 @@ def test_triage_has_filters_and_decision_buttons():
         assert any(b.label.endswith("Accept") for b in at.button)
 
 
-def test_selecting_another_upload_does_not_break():
+def test_switching_company_and_audit_does_not_break():
     at = _app()
-    sel = at.sidebar.selectbox[0]
-    sel.select(sel.options[-1]).run()  # oldest upload
+    company, audit = at.sidebar.selectbox[0], at.sidebar.selectbox[1]
+    assert company.label == "Company" and audit.label == "Audit"
+    audit.select(audit.options[-1]).run()       # oldest audit of this company
+    assert not at.exception
+    company = at.sidebar.selectbox[0]
+    company.select(company.options[-1]).run()   # another company
     assert not at.exception
 
 

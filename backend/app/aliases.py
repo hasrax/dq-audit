@@ -37,11 +37,23 @@ def load_client_labels(path: Path | str | None = None) -> dict[str, str]:
     return {k: v for k, v in raw.items() if not k.startswith("_")}
 
 
+_WORKSPACE_NAMES: dict[str, str] = {}
+
+
+def set_workspace_names(names: dict[str, str]) -> None:
+    """Workspace display names (from the database) take precedence over the
+    config labels; see app.workspaces.refresh_names."""
+    _WORKSPACE_NAMES.clear()
+    _WORKSPACE_NAMES.update(names)
+
+
 def client_label(source_client: str | None, labels: dict[str, str] | None = None) -> str:
     """Anonymised display name for a client; real names never reach the UI,
     logs or exports. Unknown clients show as-is (the user typed them)."""
     if not source_client:
         return ""
+    if source_client in _WORKSPACE_NAMES:
+        return _WORKSPACE_NAMES[source_client]
     labels = load_client_labels() if labels is None else labels
     return labels.get(source_client, source_client)
 

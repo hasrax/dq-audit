@@ -197,16 +197,19 @@ def fetch_rule(conn: psycopg.Connection, rule_id: int) -> dict | None:
         return cur.execute("SELECT * FROM rules WHERE id = %s", (rule_id,)).fetchone()
 
 
-def list_uploads(conn: psycopg.Connection) -> list[dict]:
-    """All audit runs, newest first, with a live triage-progress count."""
+def list_uploads(conn: psycopg.Connection, source_client: str | None = None) -> list[dict]:
+    """Audit runs (optionally one client's), newest first, with a live
+    triage-progress count."""
+    where = "WHERE u.source_client = %s " if source_client else ""
     with conn.cursor(row_factory=dict_row) as cur:
         return cur.execute(
-            "SELECT u.id, u.filename, u.source_client, u.upload_date, u.row_count, "
+            "SELECT u.id, u.filename, u.source_client, u.upload_date, u.data_as_of, u.row_count, "
             "u.status, "
             "count(i.id) AS issue_count, "
             "count(i.id) FILTER (WHERE i.status = 'flagged') AS pending_count "
-            "FROM uploads u LEFT JOIN issues i ON i.upload_id = u.id "
-            "GROUP BY u.id ORDER BY u.id DESC"
+            "FROM uploads u LEFT JOIN issues i ON i.upload_id = u.id " + where +
+            "GROUP BY u.id ORDER BY u.id DESC",
+            (source_client,) if source_client else (),
         ).fetchall()
 
 

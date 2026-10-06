@@ -1,23 +1,37 @@
-# Calm, readable theme for non-technical SME staff (accountants,
-# storekeepers, data-entry operators, managers). Blue rather than
-# Streamlit's default red, so ordinary actions don't read as alarms;
-# colours chosen for WCAG AA contrast on white.
+# Calm theme in two modes; viewers switch with the menu (⋮ > Settings).
+# Colour carries meaning (see dashboard/theme.py): sage = good,
+# mustard = warning, coral = high severity, lavender = AI, blue = rules.
+# Accent shades differ per mode so text keeps AA contrast.
 
 [theme]
-base = "light"
-primaryColor = "#1F5FAD"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F4F6F9"
-textColor = "#1D2939"
-linkColor = "#1F5FAD"
-borderColor = "#E4E7EC"
 font = "sans-serif"
 baseFontSize = 15
-baseRadius = "medium"
+baseRadius = "large"
 showWidgetBorder = true
 
-[theme.sidebar]
-backgroundColor = "#F4F6F9"
+[theme.dark]
+primaryColor = "#8FC9B4"
+backgroundColor = "#0E1013"
+secondaryBackgroundColor = "#1B1F27"
+textColor = "#E8EAEF"
+linkColor = "#86AEF7"
+borderColor = "#272C35"
+
+[theme.dark.sidebar]
+backgroundColor = "#121419"
+secondaryBackgroundColor = "#1B1F27"
+
+[theme.light]
+primaryColor = "#2E7D63"
+backgroundColor = "#F7F6F2"
+secondaryBackgroundColor = "#EFEDE6"
+textColor = "#1E2127"
+linkColor = "#2F64C8"
+borderColor = "#E3E0D7"
+
+[theme.light.sidebar]
+backgroundColor = "#F1EFE9"
+secondaryBackgroundColor = "#E8E5DC"
 
 [client]
 toolbarMode = "viewer"

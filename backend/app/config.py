@@ -28,10 +28,18 @@ class Settings:
     db_name: str
     db_user: str
     db_password: str
+    database_url: str = ""  # full URL (e.g. a hosted Postgres); overrides DB_* when set
 
     @property
     def db_url(self) -> str:
-        """psycopg-style URL; password is percent-encoded (it may contain @ etc.)."""
+        """psycopg-style URL; password is percent-encoded (it may contain @ etc.).
+
+        DATABASE_URL wins when set -- that is how the hosted app reaches its
+        cloud database (which requires ?sslmode=require), while local runs
+        keep using the DB_* parts.
+        """
+        if self.database_url:
+            return self.database_url
         return (
             f"postgresql://{self.db_user}:{quote(self.db_password, safe='')}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
@@ -49,4 +57,5 @@ def load_settings(env_path: Path | None = None) -> Settings:
         db_name=os.environ.get("DB_NAME", "dq_audit"),
         db_user=os.environ.get("DB_USER", "postgres"),
         db_password=os.environ.get("DB_PASSWORD", ""),
+        database_url=os.environ.get("DATABASE_URL", ""),
     )

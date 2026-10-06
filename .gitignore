@@ -8,3 +8,8 @@ __pycache__/
 output/
 *.pyc
 .pytest_cache/
+
+# Docs and notes stay local; only the README is published
+*.md
+!README.md
+.claude/

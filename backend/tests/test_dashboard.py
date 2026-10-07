@@ -16,8 +16,9 @@ ALL_PAGES = ["overview", "triage", "ask", "rules", "scores", "relationships", "e
              "new-audit", "schema", "organisation", "settings"]
 
 
-def _app(user=ADMIN, page: str | None = None):
-    """The app as a signed-in user (login state lives in session_state)."""
+def _app(user=ADMIN, page: str | None = None, company: str | None = "hemas"):
+    """The app as a signed-in user (login state lives in session_state),
+    looking at one company (default) or all companies (company=None)."""
     from streamlit.testing.v1 import AppTest
 
     at = AppTest.from_file(str(APP_PATH), default_timeout=90)
@@ -26,6 +27,8 @@ def _app(user=ADMIN, page: str | None = None):
         at.session_state["username"] = user["username"]
     if page:
         at.session_state["start_page"] = page
+    if company:
+        at.session_state["workspace"] = company
     return at.run()
 
 
@@ -50,7 +53,7 @@ def test_every_admin_page_renders_without_error(page):
     assert any("ClarityDQ" in m.value for m in at.markdown)   # branded header
 
 
-def test_dashboard_renders_kpi_cards():
+def test_company_dashboard_renders_kpi_cards():
     at = _app(page="overview")
     text = _text(at)
     for label in ("Data quality score", "Waiting for review", "High severity", "Found by AI"):
@@ -74,13 +77,25 @@ def test_triage_has_filters_and_decision_buttons():
 
 def test_switching_company_and_audit_does_not_break():
     at = _app()
-    company, audit = at.sidebar.selectbox[0], at.sidebar.selectbox[1]
-    assert company.label == "Company" and audit.label == "Audit"
+    company = at.sidebar.selectbox[0]
+    assert company.label == "Company"
+    audit = next(sb for sb in at.selectbox if sb.label == "Audit")   # audit picker sits on the page
     audit.select(audit.options[-1]).run()       # oldest audit of this company
     assert not at.exception
     company = at.sidebar.selectbox[0]
     company.select(company.options[-1]).run()   # another company
     assert not at.exception
+
+
+@pytest.mark.parametrize("page", ["overview", "triage", "evaluation", "settings"])
+def test_all_companies_mode_renders(page):
+    at = _app(page=page, company=None)
+    assert not at.exception, at.exception
+    text = _text(at)
+    if page == "overview":
+        assert "All companies" in text
+    if page == "triage":
+        assert "Choose a company to continue." in text
 
 
 def test_signed_out_users_see_only_the_login_form():

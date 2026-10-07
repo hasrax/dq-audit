@@ -18,8 +18,8 @@ import html
 import plotly.graph_objects as go
 
 PALETTES = {
-    "dark": dict(BG="#0E1013", SURFACE="#15181E", SURFACE_2="#1B1F27", BORDER="#272C35",
-                 TEXT="#E8EAEF", MUTED="#A2AAB8", FAINT="#6B7383",
+    "dark": dict(BG="#16181D", SURFACE="#1F2229", SURFACE_2="#272B34", BORDER="#343A46",
+                 TEXT="#EEF0F4", MUTED="#B4BBC8", FAINT="#8790A0",
                  SAGE="#8FC9B4", MUSTARD="#F1C76E", CORAL="#F39A85", LAVENDER="#B7ABF4", BLUE="#86AEF7",
                  ON_ACCENT="#0B1210", GLOW=0.08),
     "light": dict(BG="#F7F6F2", SURFACE="#FFFFFF", SURFACE_2="#F1EFE9", BORDER="#E3E0D7",
@@ -116,13 +116,27 @@ def css() -> str:
   --sage:{SAGE}; --mustard:{MUSTARD}; --coral:{CORAL}; --lavender:{LAVENDER}; --blue:{BLUE};
 }}
 .stApp {{ background: radial-gradient(1200px 600px at 100% 110%, {_rgba(SAGE, GLOW)}, transparent 60%), var(--bg); }}
+[data-testid="stMainBlockContainer"] {{ padding-top: 2.4rem; padding-bottom: 5rem; max-width: 1320px; }}
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] {{ gap: 1.15rem; }}
+p, li {{ line-height: 1.6; }}
+[data-testid="stSidebar"] .sidebar-section {{ font-size: .72rem; font-weight: 700; letter-spacing: .6px;
+  text-transform: uppercase; color: var(--faint); margin: 14px 0 2px 4px; }}
+[data-testid="stSidebar"] [data-testid="stPageLink"] a {{ padding: 6px 10px; border-radius: 10px; }}
+.company-card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px 14px 20px; }}
+.company-card .cname {{ font-size: 1.15rem; font-weight: 700; color: var(--text); }}
+.company-card .cmeta {{ font-size: .86rem; color: var(--muted); margin-top: 2px; }}
+.company-card .cscore {{ font-size: 2.3rem; font-weight: 750; line-height: 1.1; margin-top: 12px; }}
+.company-card .cstats {{ display:flex; gap:18px; margin-top: 10px; font-size: .88rem; color: var(--muted); }}
+.company-card .cstats b {{ color: var(--text); font-size: 1rem; }}
+.st-key-chat_scroll {{ height: calc(100vh - 335px) !important; min-height: 380px; }}
+.st-key-chat_threads {{ height: calc(100vh - 225px) !important; min-height: 420px; }}
 [data-testid="stSidebar"] {{ border-right: 1px solid var(--border); }}
 [data-testid="stHeader"] {{ background: transparent; }}
 h1, h2, h3, h4, h5 {{ letter-spacing: 0.1px; }}
 
 /* cards */
-.card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px; }}
-.card-title {{ font-size: 1.02rem; font-weight: 650; color: var(--text); margin-bottom: 6px; }}
+.card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; }}
+.card-title {{ font-size: 1.08rem; font-weight: 650; color: var(--text); margin-bottom: 8px; }}
 .card-sub {{ font-size: .84rem; color: var(--muted); }}
 [data-testid="stVerticalBlockBorderWrapper"] {{ border-radius: 16px; }}
 div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
@@ -190,7 +204,8 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 
 .context-line {{ font-size: .92rem; color: var(--muted); margin: -4px 0 10px 0; }}
 .context-line b {{ color: var(--text); }}
-.page-title {{ font-size: 1.7rem; font-weight: 700; color: var(--text); margin: 0 0 2px 0; }}
+.page-title {{ font-size: 1.9rem; font-weight: 700; color: var(--text); margin: 0 0 4px 0; letter-spacing: -.2px; }}
+.page-sub {{ font-size: .95rem; color: var(--muted); margin: -2px 0 6px 0; }}
 
 .hero {{ text-align:center; padding: 8px 0 6px 0; }}
 .hero-num {{ font-size: 4.2rem; font-weight: 800; line-height: 1; }}

@@ -5,21 +5,21 @@
 
 [theme]
 font = "sans-serif"
-baseFontSize = 15
+baseFontSize = 16
 baseRadius = "large"
 showWidgetBorder = true
 
 [theme.dark]
 primaryColor = "#8FC9B4"
-backgroundColor = "#0E1013"
-secondaryBackgroundColor = "#1B1F27"
-textColor = "#E8EAEF"
+backgroundColor = "#16181D"
+secondaryBackgroundColor = "#272B34"
+textColor = "#EEF0F4"
 linkColor = "#86AEF7"
-borderColor = "#272C35"
+borderColor = "#343A46"
 
 [theme.dark.sidebar]
-backgroundColor = "#121419"
-secondaryBackgroundColor = "#1B1F27"
+backgroundColor = "#1A1C22"
+secondaryBackgroundColor = "#272B34"
 
 [theme.light]
 primaryColor = "#2E7D63"

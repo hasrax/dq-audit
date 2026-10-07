@@ -182,8 +182,9 @@ def _render_account_sidebar() -> None:
     user = _current_user()
     role = "Administrator" if user["role"] == "admin" else "Reviewer"
     with st.sidebar.container(border=True):
-        st.markdown(f"👤 **{html.escape(user['username'])}**  \n:gray[{role}]")
-        if st.button("Sign out", key="sign_out", width="stretch"):
+        name_col, out_col = st.columns([3, 1.4], vertical_alignment="center")
+        name_col.markdown(f"**{html.escape(user['username'])}**  \n:gray[{role}]")
+        if out_col.button("", key="sign_out", icon=":material/logout:", help="Sign out", width="stretch"):
             for k in ("user", "username"):
                 st.session_state.pop(k, None)
             st.rerun()
@@ -204,73 +205,181 @@ def main() -> None:
         return
     static = Path(__file__).resolve().parent / "static"
     st.logo(str(static / f"logo-{ui.MODE}.svg"), size="large", icon_image=str(static / "icon.svg"))
-    _render_account_sidebar()
     admin = _is_admin()
 
     ws.sync_from_uploads(conn)
     ws.refresh_names(conn)
     companies = ws.list_workspaces(conn)
-    if not companies:
-        st.markdown('<div class="page-title">Welcome</div>', unsafe_allow_html=True)
-        if admin:
-            st.info("No companies yet. Click **＋ Import** to create one and run its first audit.")
-            if st.button("＋  Import", key="fab"):
-                _import_dialog(conn)
-        else:
-            st.info("No audits yet. An administrator needs to import the first export.")
-        return
+    slug = _company_picker(conn, companies, admin)
 
-    by_slug = {c["slug"]: c for c in companies}
-    if st.session_state.get("workspace") not in by_slug:
-        st.session_state["workspace"] = companies[0]["slug"]
-    slug = st.sidebar.selectbox(
-        "Company", list(by_slug), key="workspace",
-        format_func=lambda k: f"{by_slug[k]['name']}  ·  {by_slug[k]['audit_count']} audit(s)",
-    )
-    uploads = repository.list_uploads(conn, source_client=slug)
-    if not uploads:
-        st.markdown(f'<div class="page-title">{html.escape(by_slug[slug]["name"])}</div>', unsafe_allow_html=True)
-        st.info("No audits for this company yet." + (" Click **＋ Import** to run the first one." if admin else ""))
-        if admin and st.button("＋  Import", key="fab"):
-            _import_dialog(conn)
-        return
+    upload = None
+    if slug != ALL_COMPANIES:
+        uploads = repository.list_uploads(conn, source_client=slug)
+        if uploads:
+            by_id = {u["id"]: u for u in uploads}
+            picked = st.session_state.get(f"audit_{slug}")
+            upload = by_id.get(picked, uploads[0])
 
-    by_id = {u["id"]: u for u in uploads}
-    audit_key = f"audit_{slug}"
-    if st.session_state.get(audit_key) not in by_id:
-        st.session_state[audit_key] = uploads[0]["id"]
-    uid = st.sidebar.selectbox(
-        "Audit", list(by_id), key=audit_key,
-        format_func=lambda i: (f"#{i} · data as of {(by_id[i]['data_as_of'] or by_id[i]['upload_date']):%d %b %Y}"
-                               f" · {by_id[i]['pending_count']}/{by_id[i]['issue_count']} to review"),
-    )
-    upload = by_id[uid]
+    navigation = _build_navigation(conn, slug, upload, admin)
+    _render_sidebar_nav(admin)
+    if upload is not None:
+        counts = repository.triage_counts(conn, upload["id"])
+        st.sidebar.markdown('<div class="sidebar-section">Review progress</div>', unsafe_allow_html=True)
+        s1, s2 = st.sidebar.columns(2)
+        s1.metric("To review", counts.get("flagged", 0))
+        s2.metric("Reviewed", sum(counts.get(k, 0) for k in ("accepted", "rejected", "considered")))
+    with st.sidebar.expander(f"About {APP_NAME}", icon=":material/info:"):
+        st.markdown(ABOUT_MD)
+    _render_account_sidebar()
 
-    counts = repository.triage_counts(conn, uid)
-    total = upload["issue_count"]
-    reviewed = sum(counts.get(s, 0) for s in ("accepted", "rejected", "considered"))
-
-    _render_header(upload, counts, total, reviewed)
     if st.session_state.get("flash"):
         st.toast(st.session_state.pop("flash"), icon=":material/check_circle:")
-    navigation = _build_navigation(conn, upload, admin)
-
-    st.sidebar.markdown("### Triage progress")
-    s1, s2 = st.sidebar.columns(2)
-    s1.metric("✅ Accepted", counts.get("accepted", 0))
-    s2.metric("❌ Rejected", counts.get("rejected", 0))
-    s3, s4 = st.sidebar.columns(2)
-    s3.metric("🤔 Considered", counts.get("considered", 0))
-    s4.metric("⚪ Pending", counts.get("flagged", 0))
-
-    with st.sidebar.expander(f"ℹ️ About {APP_NAME}"):
-        st.markdown(ABOUT_MD)
-
     # floating import action; not on Ask, where it would cover the message box
     if admin and navigation.url_path != "ask" and st.button("＋  Import", key="fab",
                                                             help="Upload a new export and run an audit"):
         _import_dialog(conn)
     navigation.run()
+
+
+ALL_COMPANIES = "__all__"
+
+
+def _switch_company(slug: str, audit_id: int | None = None) -> None:
+    """Request a company (and optionally audit) switch from anywhere on the
+    page. Applied at the top of the next run, before the switcher widget
+    exists -- Streamlit forbids changing a widget's value after it is drawn."""
+    st.session_state["_pending_workspace"] = slug
+    if audit_id is not None:
+        st.session_state["_pending_audit"] = (slug, audit_id)
+
+
+def _company_picker(conn, companies: list[dict], admin: bool) -> str:
+    """Sidebar company switcher: "All companies" (default) or one company."""
+    if "_pending_workspace" in st.session_state:
+        st.session_state["workspace"] = st.session_state.pop("_pending_workspace")
+    if "_pending_audit" in st.session_state:
+        slug_, audit_id = st.session_state.pop("_pending_audit")
+        st.session_state[f"audit_{slug_}"] = audit_id
+    by_slug = {c["slug"]: c for c in companies}
+    options = [ALL_COMPANIES, *by_slug]
+    if st.session_state.get("workspace") not in options:
+        st.session_state["workspace"] = ALL_COMPANIES
+    slug = st.sidebar.selectbox(
+        "Company", options, key="workspace",
+        format_func=lambda k: "All companies" if k == ALL_COMPANIES else
+        f"{by_slug[k]['name']}  ·  {by_slug[k]['audit_count']} audit(s)",
+    )
+    if admin and st.sidebar.button("New company", icon=":material/add_business:", key="new_company",
+                                   width="stretch"):
+        _new_company_dialog(conn)
+    return slug
+
+
+@st.dialog("New company")
+def _new_company_dialog(conn) -> None:
+    st.caption("A company is a folder for one organisation's imports. Use any name — you can rename it later.")
+    name = st.text_input("Company name", placeholder="e.g. Sunrise Traders")
+    if st.button("Create", type="primary", disabled=not name.strip(), icon=":material/check:"):
+        try:
+            slug = ws.create_workspace(conn, name, created_by=_username())
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+        _switch_company(slug)
+        st.session_state["flash"] = f"Created {name.strip()} — import its first export to start."
+        st.rerun()
+
+
+def _render_sidebar_nav(admin: bool) -> None:
+    pages = st.session_state["_pages"]
+    section = None
+    for key, (title, icon, sec) in PAGE_SPECS.items():
+        if key not in pages:
+            continue
+        if sec != section:
+            st.sidebar.markdown(f'<div class="sidebar-section">{sec}</div>', unsafe_allow_html=True)
+            section = sec
+        st.sidebar.page_link(pages[key], label=title, icon=f":material/{icon}:")
+
+
+def _audit_bar(conn, slug: str) -> dict | None:
+    """Top-of-page context for one company: which audit is shown (latest by
+    default, older ones on request). None (with an empty state) if the
+    company has no audits yet."""
+    uploads = repository.list_uploads(conn, source_client=slug)
+    name = client_label(slug)
+    if not uploads:
+        st.markdown(f'<div class="page-title">{html.escape(name)}</div>', unsafe_allow_html=True)
+        st.info("No audits for this company yet.")
+        if _is_admin() and st.button("Import the first export", type="primary", icon=":material/upload_file:",
+                                     key="empty_import"):
+            _import_dialog(conn)
+        return None
+    by_id = {u["id"]: u for u in uploads}
+    key = f"audit_{slug}"
+    if st.session_state.get(key) not in by_id:
+        st.session_state[key] = uploads[0]["id"]
+    latest = uploads[0]["id"]
+
+    def _label(i: int) -> str:
+        u = by_id[i]
+        when = f"{(u['data_as_of'] or u['upload_date']):%d %b %Y}"
+        return f"Latest · {when}  (#{i})" if i == latest else f"{when}  (#{i})"
+
+    info, pick = st.columns([3, 1.3], vertical_alignment="bottom")
+    uid = pick.selectbox("Audit", list(by_id), key=key, format_func=_label)
+    u = by_id[uid]
+    reviewed = u["issue_count"] - u["pending_count"]
+    info.markdown(
+        f'<div class="context-line"><b>{html.escape(name)}</b> · {u["issue_count"]} issues · '
+        f'{reviewed} reviewed · {u["row_count"]:,} rows audited</div>',
+        unsafe_allow_html=True,
+    )
+    return u
+
+
+def _choose_company(conn, purpose: str) -> None:
+    """Shown on one-company pages while "All companies" is selected."""
+    st.markdown(f'<div class="page-title">{purpose}</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-sub">Choose a company to continue.</div>', unsafe_allow_html=True)
+    _company_cards(conn, button_label="Open")
+
+
+def _company_cards(conn, button_label: str = "Open") -> None:
+    companies = ws.list_workspaces(conn)
+    if not companies:
+        st.info("No companies yet. Use **New company** in the sidebar to create one.")
+        return
+    cols = st.columns(3)
+    for n, c in enumerate(companies):
+        uploads = repository.list_uploads(conn, source_client=c["slug"])
+        with cols[n % 3]:
+            if uploads:
+                latest = uploads[0]
+                score_row = conn.execute("SELECT overall_score FROM dq_scores WHERE upload_id = %s",
+                                         (latest["id"],)).fetchone()
+                score = float(score_row[0]) if score_row else None
+                when = f"{(latest['data_as_of'] or latest['upload_date']):%d %b %Y}"
+                body = (f'<div class="cscore" style="color:{_status_color(score) if score is not None else ui.MUTED}">'
+                        f'{score:.0f}<span style="font-size:1rem;color:var(--faint)">/100</span></div>'
+                        if score is not None else '<div class="cscore">—</div>')
+                body += (f'<div class="cstats"><span><b>{latest["pending_count"]}</b> to review</span>'
+                         f'<span><b>{latest["issue_count"]}</b> issues</span>'
+                         f'<span><b>{len(uploads)}</b> audit(s)</span></div>')
+                meta = f"Latest audit: data as of {when}"
+            else:
+                body, meta = '<div class="cstats">No audits yet</div>', "Empty folder"
+            st.markdown(f'<div class="company-card"><div class="cname">{html.escape(c["name"])}</div>'
+                        f'<div class="cmeta">{meta}</div>{body}</div>', unsafe_allow_html=True)
+            st.button(button_label, key=f"open_company_{c['slug']}", width="stretch",
+                      icon=":material/arrow_forward:", on_click=_switch_company, args=(c["slug"],))
+
+
+def _render_portfolio(conn) -> None:
+    st.markdown('<div class="page-title">All companies</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-sub">Each company\'s latest audit. Open one to see its dashboard, issues and chats.'
+                '</div>', unsafe_allow_html=True)
+    _company_cards(conn)
 
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -349,39 +458,64 @@ PAGE_SPECS = {
 ADMIN_PAGES = {"new-audit", "schema", "organisation", "settings"}
 
 
-def _build_navigation(conn, upload: dict, admin: bool):
-    """Sidebar navigation that renders only the selected page.
+def _build_navigation(conn, slug: str, upload: dict | None, admin: bool):
+    """Pages render only when selected (st.tabs would run all of them on
+    every click). Navigation is drawn by _render_sidebar_nav so the company
+    switcher can sit above it. Start page: ?page=<path> or
+    session_state["start_page"] (tests)."""
+    all_mode = slug == ALL_COMPANIES
 
-    st.tabs would execute every page on every click; on a small hosted
-    server that makes each interaction slow. The start page can be set
-    with ?page=<path> (or session_state["start_page"] in tests).
-    """
+    def company_page(title: str, render, needs_audit: bool = True):
+        def run():
+            if all_mode:
+                _choose_company(conn, title)
+                return
+            current = _audit_bar(conn, slug) if needs_audit else None
+            if needs_audit and current is None:
+                return
+            render(current)
+        return run
+
+    def overview():
+        if all_mode:
+            _render_portfolio(conn)
+        else:
+            current = _audit_bar(conn, slug)
+            if current is not None:
+                _render_overview(conn, current)
+
+    def evaluation():
+        if all_mode:
+            _render_evaluation(conn, None)
+        else:
+            current = _audit_bar(conn, slug)
+            if current is not None:
+                _render_evaluation(conn, current)
+
     renderers = {
-        "overview": lambda: _render_overview(conn, upload),
-        "triage": lambda: _render_triage(conn, upload),
-        "ask": lambda: _render_chat(conn, upload),
-        "rules": lambda: _render_rules(conn, upload),
-        "scores": lambda: _render_scores(conn, upload),
-        "relationships": lambda: _render_relationships(conn, upload),
-        "evaluation": lambda: _render_evaluation(conn, upload),
+        "overview": overview,
+        "triage": company_page("Triage", lambda u: _render_triage(conn, u)),
+        "ask": company_page("Ask", lambda u: _render_chat(conn, u)),
+        "rules": company_page("Rules", lambda u: _render_rules(conn, u)),
+        "scores": company_page("Scores & trend", lambda u: _render_scores(conn, u)),
+        "relationships": company_page("Relationships", lambda u: _render_relationships(conn, u)),
+        "evaluation": evaluation,
         "new-audit": lambda: _render_upload(conn),
-        "schema": lambda: _render_schema_review(conn, upload),
-        "organisation": lambda: _render_organisation(conn, upload),
+        "schema": company_page("Schema review", lambda u: _render_schema_review(conn, u)),
+        "organisation": company_page("Organisation", lambda u: _render_organisation(conn, u)),
         "settings": lambda: _render_settings(conn),
     }
     start = st.session_state.get("start_page") or st.query_params.get("page") or "overview"
     allowed = [k for k in PAGE_SPECS if admin or k not in ADMIN_PAGES]
     if start not in allowed:
         start = "overview"
-    sections: dict[str, list] = {}
     pages = {}
     for key in allowed:
-        title, icon, section = PAGE_SPECS[key]
+        title, icon, _section = PAGE_SPECS[key]
         pages[key] = st.Page(renderers[key], title=title, icon=f":material/{icon}:",
                              url_path=key, default=(key == start))
-        sections.setdefault(section, []).append(pages[key])
     st.session_state["_pages"] = pages
-    return st.navigation(sections, position="sidebar")
+    return st.navigation(list(pages.values()), position="hidden")
 
 
 FILTER_LABELS = {"rule": "Rules", "llm": "AI", "flagged": "To review", "yes": "Yes", "no": "No"}
@@ -593,7 +727,7 @@ def _render_chat(conn, upload: dict) -> None:
     active = st.session_state[key]
 
     side, main = st.columns([1, 3], gap="medium")
-    with side.container(border=True, height=620):
+    with side.container(border=True, height=620, key="chat_threads"):
         if st.button("New chat", icon=":material/add:", type="primary", width="stretch", key="chat_new"):
             st.session_state[key] = chat_threads.create_thread(conn, client, username)
             st.rerun()
@@ -636,7 +770,7 @@ def _render_chat(conn, upload: dict) -> None:
                            if active else [], from_chat=True)
 
         history = chat_threads.messages(conn, active) if active else []
-        with st.container(border=True, height=430):
+        with st.container(border=True, height=430, key="chat_scroll"):
             if not history:
                 st.markdown('<div class="card-sub">Ask anything about this audit — for example what to fix '
                             'first, what an issue means, or how to explain the results to a manager.</div>',
@@ -677,14 +811,18 @@ def _decisions_caption(acc: int, rej: int) -> str:
 EVAL_SCOPES = ["This audit", "This company", "All companies"]
 
 
-def _render_evaluation(conn, upload: dict) -> None:
-    uid, client = upload["id"], upload["source_client"]
-    label = client_label(client)
+def _render_evaluation(conn, upload: dict | None) -> None:
     st.markdown('<div class="page-title">Evaluation</div>', unsafe_allow_html=True)
-    st.caption("How accurate is the tool? Every accept / reject in Triage is a ground-truth label, so these "
-               "numbers are measured on real data and update as people review.")
-    scope = st.segmented_control("Scope", EVAL_SCOPES, default="This company", key="eval_scope",
-                                 label_visibility="collapsed") or "This company"
+    st.markdown('<div class="page-sub">How accurate is the tool? Every accept / reject in Triage is a ground-truth '
+                'label, so these numbers are measured on real data and update as people review.</div>',
+                unsafe_allow_html=True)
+    if upload is None:
+        uid, client, label, scope = None, None, "all companies", "All companies"
+    else:
+        uid, client = upload["id"], upload["source_client"]
+        label = client_label(client)
+        scope = st.segmented_control("Scope", ["This company", "This audit", "All companies"], default="This company",
+                                     key="eval_scope", label_visibility="collapsed") or "This company"
     issues = live_eval.scope_issues(
         conn, upload_id=uid if scope == "This audit" else None,
         source_client=client if scope == "This company" else None,
@@ -727,9 +865,9 @@ def _render_evaluation(conn, upload: dict) -> None:
             st.markdown('<div class="card-sub">Appears once issues have been accepted or rejected.</div>',
                         unsafe_allow_html=True)
     with right.container(border=True):
-        st.markdown(f'<div class="card-title">Rules vs AI — do they find different problems? (audit #{uid})</div>',
+        st.markdown('<div class="card-title">Rules vs AI — do they find different problems?</div>',
                     unsafe_allow_html=True)
-        comp = real_complementarity(repository.fetch_issues(conn, uid))
+        comp = real_complementarity(issues if uid is None else repository.fetch_issues(conn, uid))
         o = comp["overall"]
         if comp["n_locations"]:
             st.plotly_chart(
@@ -745,7 +883,7 @@ def _render_evaluation(conn, upload: dict) -> None:
     left, right = st.columns(2)
     with left.container(border=True):
         st.markdown(f'<div class="card-title">Is the AI learning? — {html.escape(label)}</div>', unsafe_allow_html=True)
-        history = live_eval.ai_rejection_by_audit(conn, client)
+        history = live_eval.ai_rejection_by_audit(conn, client) if client else []
         decided = [h for h in history if h["rejection_rate"] is not None]
         if len(decided) >= 2:
             fig = go.Figure()
@@ -763,7 +901,8 @@ def _render_evaluation(conn, upload: dict) -> None:
                             config={"displayModeBar": False}, width="stretch", key="eval_learning")
             st.caption("If feedback works, the rejection rate should fall as more reviewed examples are given to the AI.")
         else:
-            st.markdown('<div class="card-sub">Needs reviewed AI findings in at least two audits of this company. '
+            st.markdown('<div class="card-sub">' + ("Choose a company to see this. " if client is None else "")
+                        + 'Needs reviewed AI findings in at least two audits of a company. '
                         'Review AI issues, then run another audit with AI analysis.</div>', unsafe_allow_html=True)
     with right.container(border=True):
         st.markdown('<div class="card-title">Trend predictions</div>', unsafe_allow_html=True)
@@ -1121,7 +1260,8 @@ def _render_overview(conn, upload: dict) -> None:
     summary = recurrence.recurrence_summary(conn, uid)
 
     title, action = st.columns([5, 1], vertical_alignment="bottom")
-    title.markdown('<div class="page-title">Dashboard</div>', unsafe_allow_html=True)
+    title.markdown(f'<div class="page-title">{html.escape(client_label(upload["source_client"]))}</div>',
+                   unsafe_allow_html=True)
     if action.button("Reports", icon=":material/summarize:", width="stretch", key="open_reports"):
         _report_dialog(conn, upload)
 
@@ -1330,8 +1470,7 @@ def _render_upload(conn, in_dialog: bool = False) -> None:
             except Exception as exc:  # noqa: BLE001 -- surface any failure to the user
                 st.error(f"Audit failed: {exc}")
                 return
-        st.session_state["workspace"] = client
-        st.session_state[f"audit_{client}"] = result["upload_id"]
+        _switch_company(client, result["upload_id"])
         st.session_state["flash"] = (
             f"Audit #{result['upload_id']} complete — {result['issues']} issues "
             f"({result['rule_issues']} by rules, {result['llm_issues']} by AI) · "

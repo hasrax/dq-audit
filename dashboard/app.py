@@ -52,6 +52,7 @@ from app.chat import assistant
 from app.chat import threads as chat_threads
 from app.reports.audit_report import build_markdown as standard_report_md
 from app.reports.render import to_docx, to_pdf
+from app.eval import live as live_eval
 from app.auth import users as auth
 from app.llm import selection as llm_selection
 from app.aliases import base_client
@@ -339,6 +340,7 @@ PAGE_SPECS = {
     "rules": ("Rules", "rule", "Understand"),
     "scores": ("Scores & trend", "monitoring", "Understand"),
     "relationships": ("Relationships", "account_tree", "Understand"),
+    "evaluation": ("Evaluation", "query_stats", "Understand"),
     "new-audit": ("New audit", "upload_file", "Administration"),
     "schema": ("Schema review", "menu_book", "Administration"),
     "organisation": ("Organisation", "domain", "Administration"),
@@ -361,6 +363,7 @@ def _build_navigation(conn, upload: dict, admin: bool):
         "rules": lambda: _render_rules(conn, upload),
         "scores": lambda: _render_scores(conn, upload),
         "relationships": lambda: _render_relationships(conn, upload),
+        "evaluation": lambda: _render_evaluation(conn, upload),
         "new-audit": lambda: _render_upload(conn),
         "schema": lambda: _render_schema_review(conn, upload),
         "organisation": lambda: _render_organisation(conn, upload),
@@ -658,6 +661,146 @@ def _render_chat(conn, upload: dict) -> None:
                 reply = f"Sorry — the assistant is unavailable right now ({exc.__class__.__name__}). Please try again."
         chat_threads.add_message(conn, active, uid, "assistant", reply, username)
         st.rerun()
+
+
+def _pct(value) -> str:
+    return "—" if value is None else f"{value * 100:.0f}%"
+
+
+def _decisions_caption(acc: int, rej: int) -> str:
+    n = acc + rej
+    if not n:
+        return "no decisions yet"
+    return f"from {n} decision(s)" + (" · provisional" if n < live_eval.MIN_DECISIONS else "")
+
+
+EVAL_SCOPES = ["This audit", "This company", "All companies"]
+
+
+def _render_evaluation(conn, upload: dict) -> None:
+    uid, client = upload["id"], upload["source_client"]
+    label = client_label(client)
+    st.markdown('<div class="page-title">Evaluation</div>', unsafe_allow_html=True)
+    st.caption("How accurate is the tool? Every accept / reject in Triage is a ground-truth label, so these "
+               "numbers are measured on real data and update as people review.")
+    scope = st.segmented_control("Scope", EVAL_SCOPES, default="This company", key="eval_scope",
+                                 label_visibility="collapsed") or "This company"
+    issues = live_eval.scope_issues(
+        conn, upload_id=uid if scope == "This audit" else None,
+        source_client=client if scope == "This company" else None,
+    )
+    tm = compute_triage_metrics(issues)
+    rule, ai = tm["by_source"]["rule"], tm["by_source"]["llm"]
+    ai_decided = ai["accepted"] + ai["rejected"]
+
+    k = st.columns(4)
+    k[0].markdown(ui.kpi_card("Rule precision", _pct(rule["empirical_precision"]),
+                              _decisions_caption(rule["accepted"], rule["rejected"]), ui.BLUE), unsafe_allow_html=True)
+    k[1].markdown(ui.kpi_card("AI precision", _pct(ai["empirical_precision"]),
+                              _decisions_caption(ai["accepted"], ai["rejected"]), ui.LAVENDER), unsafe_allow_html=True)
+    k[2].markdown(ui.kpi_card("AI rejection rate", _pct(ai["rejected"] / ai_decided if ai_decided else None),
+                              "hallucination indicator (lower is better)", ui.CORAL), unsafe_allow_html=True)
+    k[3].markdown(ui.kpi_card("Reviewed", f"{tm['reviewed']}/{tm['total']}",
+                              f"{tm['by_status']['considered']} marked unsure", ui.MUSTARD), unsafe_allow_html=True)
+    if not tm["reviewed"]:
+        st.info("No reviews yet in this scope. Accept or reject issues in **Triage** — these figures fill in "
+                f"automatically (about {live_eval.MIN_DECISIONS}+ decisions per detector give stable numbers).")
+
+    left, right = st.columns(2)
+    with left.container(border=True):
+        st.markdown('<div class="card-title">Precision by dimension</div>', unsafe_allow_html=True)
+        rows = [r for r in live_eval.precision_by_dimension(issues) if r["precision"] is not None]
+        if rows:
+            fig = go.Figure()
+            for source, color, name in (("rule", ui.BLUE, "Rules"), ("llm", ui.LAVENDER, "AI")):
+                sub = [r for r in rows if r["source"] == source]
+                if sub:
+                    fig.add_bar(y=[r["dimension"].replace("_", " ") for r in sub], x=[r["precision"] * 100 for r in sub],
+                                orientation="h", name=name, marker_color=color,
+                                customdata=[r["accepted"] + r["rejected"] for r in sub],
+                                hovertemplate=name + " · %{y}: %{x:.0f}% of %{customdata} decisions<extra></extra>")
+            fig.update_layout(barmode="group", showlegend=True, legend=dict(orientation="h", y=-0.15))
+            fig.update_xaxes(range=[0, 100], ticksuffix="%")
+            st.plotly_chart(ui.style_figure(fig, 280).update_layout(showlegend=True), config={"displayModeBar": False},
+                            width="stretch", key="eval_prec_dim")
+        else:
+            st.markdown('<div class="card-sub">Appears once issues have been accepted or rejected.</div>',
+                        unsafe_allow_html=True)
+    with right.container(border=True):
+        st.markdown(f'<div class="card-title">Rules vs AI — do they find different problems? (audit #{uid})</div>',
+                    unsafe_allow_html=True)
+        comp = real_complementarity(repository.fetch_issues(conn, uid))
+        o = comp["overall"]
+        if comp["n_locations"]:
+            st.plotly_chart(
+                ui.donut(["Rules only", "AI only", "Both"], [o["rule_only"], o["llm_only"], o["both"]],
+                         [ui.BLUE, ui.LAVENDER, ui.SAGE], f"{o['both_pct']:.0f}%", "found by both"),
+                config={"displayModeBar": False}, width="stretch", key="eval_comp",
+            )
+            st.caption(f"{comp['n_locations']} problem locations: {o['rule_only']} rules only, {o['llm_only']} AI only, "
+                       f"{o['both']} both. A small overlap means the two detectors complement each other.")
+        else:
+            st.markdown('<div class="card-sub">No issues in this audit.</div>', unsafe_allow_html=True)
+
+    left, right = st.columns(2)
+    with left.container(border=True):
+        st.markdown(f'<div class="card-title">Is the AI learning? — {html.escape(label)}</div>', unsafe_allow_html=True)
+        history = live_eval.ai_rejection_by_audit(conn, client)
+        decided = [h for h in history if h["rejection_rate"] is not None]
+        if len(decided) >= 2:
+            fig = go.Figure()
+            fig.add_bar(x=[f"#{h['upload_id']}" for h in history], y=[h["feedback_examples"] for h in history],
+                        name="Feedback examples given", marker_color=ui.SURFACE_2, yaxis="y2",
+                        hovertemplate="%{y} examples<extra></extra>")
+            fig.add_scatter(x=[f"#{h['upload_id']}" for h in decided], y=[h["rejection_rate"] * 100 for h in decided],
+                            mode="lines+markers", name="AI rejection rate", line=dict(color=ui.CORAL, width=3),
+                            hovertemplate="%{y:.0f}% rejected<extra></extra>")
+            fig.update_layout(yaxis=dict(range=[0, 100], ticksuffix="%"),
+                              yaxis2=dict(overlaying="y", side="right", showgrid=False), showlegend=True,
+                              legend=dict(orientation="h", y=-0.2))
+            fig.update_xaxes(type="category")
+            st.plotly_chart(ui.style_figure(fig, 260).update_layout(showlegend=True),
+                            config={"displayModeBar": False}, width="stretch", key="eval_learning")
+            st.caption("If feedback works, the rejection rate should fall as more reviewed examples are given to the AI.")
+        else:
+            st.markdown('<div class="card-sub">Needs reviewed AI findings in at least two audits of this company. '
+                        'Review AI issues, then run another audit with AI analysis.</div>', unsafe_allow_html=True)
+    with right.container(border=True):
+        st.markdown('<div class="card-title">Trend predictions</div>', unsafe_allow_html=True)
+        pe = live_eval.projection_error(conn, None if scope == "All companies" else client)
+        if pe["n"]:
+            st.markdown(ui.kpi_card("Typical prediction error", f"{pe['median_ape']:.1f}%",
+                                    f"median over {pe['n']} predictions of changing issues, checked against the next audit "
+                                    f"(mean {pe['mean_ape']:.1f}%)", ui.SAGE), unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="card-sub">Predictions are checked when the next audit arrives '
+                        '(needs 4+ audits of a company).</div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-title" style="margin-top:14px">AI schema descriptions</div>',
+                    unsafe_allow_html=True)
+        docs = live_eval.schema_doc_accuracy(conn, None if scope == "All companies" else client)
+        if docs:
+            st.dataframe([{"AI confidence": d["llm_confidence"].title(), "Verified": d["verified"],
+                           "Confirmed without edits": f"{d['unedited']} ({d['unedited_pct']:.0f}%)"} for d in docs],
+                         hide_index=True, width="stretch")
+        else:
+            st.markdown('<div class="card-sub">Appears once columns are verified in Schema review.</div>',
+                        unsafe_allow_html=True)
+
+    with st.expander("How these numbers are measured"):
+        st.markdown(
+            "- **Precision** = accepted ÷ (accepted + rejected), for rules and the AI separately. "
+            "Issues marked *unsure* or not yet reviewed are left out.\n"
+            "- **AI rejection rate** = the share of decided AI findings that reviewers rejected — the "
+            "hallucination indicator. Tracked per audit next to the number of past decisions the AI was shown, "
+            "to test whether in-context feedback reduces false findings.\n"
+            "- **Rules vs AI** groups issues by location (table, column, dimension). A low *both* share means the "
+            "detectors find different kinds of problems (deterministic vs contextual), i.e. they are complementary.\n"
+            "- **Recall** (how many real problems were missed) is estimated separately: a fixed-seed random sample "
+            "of rows that were *not* flagged is checked by hand, plus a controlled test with known injected errors.\n"
+            "- **Trend predictions** compare each straight-line projection with the value seen at the next audit.\n"
+            "- **Schema descriptions**: the share of AI-drafted column descriptions a person verified without "
+            "changing, by the confidence the AI reported."
+        )
 
 
 def _render_rules(conn, upload: dict) -> None:

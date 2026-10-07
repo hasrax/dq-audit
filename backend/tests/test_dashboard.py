@@ -12,7 +12,7 @@ from app.db import repository
 APP_PATH = Path(__file__).resolve().parents[2] / "dashboard" / "app.py"
 ADMIN = {"id": 0, "username": "pytest-admin", "role": "admin"}
 REVIEWER = {"id": 0, "username": "pytest-reviewer", "role": "reviewer"}
-ALL_PAGES = ["overview", "triage", "ask", "rules", "scores", "relationships",
+ALL_PAGES = ["overview", "triage", "ask", "rules", "scores", "relationships", "evaluation",
              "new-audit", "schema", "organisation", "settings"]
 
 

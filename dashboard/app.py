@@ -26,6 +26,7 @@ sys.path.append(str(Path(__file__).resolve().parent))
 
 import pandas as pd
 import plotly.graph_objects as go
+from psycopg.rows import dict_row
 import streamlit as st
 
 import theme as ui
@@ -375,10 +376,88 @@ def _company_cards(conn, button_label: str = "Open") -> None:
                       icon=":material/arrow_forward:", on_click=_switch_company, args=(c["slug"],))
 
 
+def _portfolio_rows(conn) -> list[dict]:
+    """Each company's latest audit with its score and issue counts."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute(
+            "WITH latest AS (SELECT DISTINCT ON (source_client) id, source_client, row_count, "
+            "  COALESCE(data_as_of, upload_date::date) AS as_of FROM uploads ORDER BY source_client, id DESC) "
+            "SELECT w.name, w.slug, l.id AS upload_id, l.as_of, l.row_count, s.overall_score, "
+            "  (SELECT count(*) FROM uploads u WHERE u.source_client = w.slug) AS audits, "
+            "  count(i.id) AS issues, count(i.id) FILTER (WHERE i.status = 'flagged') AS to_review, "
+            "  count(i.id) FILTER (WHERE i.severity = 'high' AND i.status <> 'rejected') AS high, "
+            "  count(i.id) FILTER (WHERE i.source = 'llm') AS ai "
+            "FROM workspaces w JOIN latest l ON l.source_client = w.slug "
+            "LEFT JOIN dq_scores s ON s.upload_id = l.id LEFT JOIN issues i ON i.upload_id = l.id "
+            "GROUP BY w.name, w.slug, l.id, l.as_of, l.row_count, s.overall_score ORDER BY w.name"
+        ).fetchall()
+
+
 def _render_portfolio(conn) -> None:
     st.markdown('<div class="page-title">All companies</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">Each company\'s latest audit. Open one to see its dashboard, issues and chats.'
-                '</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-sub">An overview of every company, based on each one\'s latest audit. '
+                'Pick a company in the sidebar (or below) to work on it.</div>', unsafe_allow_html=True)
+    rows = _portfolio_rows(conn)
+    if not rows:
+        st.info("No audits yet. Use **New company** in the sidebar, then **＋ Import** to run the first audit.")
+        return
+
+    scores = [float(r["overall_score"]) for r in rows if r["overall_score"] is not None]
+    avg = sum(scores) / len(scores) if scores else 0
+    k = st.columns(4)
+    k[0].markdown(ui.kpi_card("Companies", f"{len(rows)}", f"{sum(r['audits'] for r in rows)} audits in total",
+                              ui.BLUE), unsafe_allow_html=True)
+    k[1].markdown(ui.kpi_card("Average data quality", f"{avg:.0f}/100",
+                              f"{sum(r['row_count'] for r in rows):,} rows in latest audits", _status_color(avg)),
+                  unsafe_allow_html=True)
+    k[2].markdown(ui.kpi_card("Waiting for review", f"{sum(r['to_review'] for r in rows):,}",
+                              f"of {sum(r['issues'] for r in rows):,} issues", ui.MUSTARD), unsafe_allow_html=True)
+    k[3].markdown(ui.kpi_card("High severity", f"{sum(r['high'] for r in rows):,}",
+                              f"{sum(r['ai'] for r in rows):,} issues found by AI", ui.CORAL), unsafe_allow_html=True)
+
+    left, right = st.columns([1.1, 1])
+    with left.container(border=True):
+        st.markdown('<div class="card-title">Data quality by company</div>', unsafe_allow_html=True)
+        ordered = sorted((r for r in rows if r["overall_score"] is not None), key=lambda r: float(r["overall_score"]))
+        fig = go.Figure(go.Bar(
+            x=[float(r["overall_score"]) for r in ordered], y=[r["name"] for r in ordered], orientation="h",
+            marker_color=[_status_color(float(r["overall_score"])) for r in ordered],
+            text=[f"{float(r['overall_score']):.0f}" for r in ordered], textposition="outside",
+            hovertemplate="%{y}: %{x:.0f}/100<extra></extra>",
+        ))
+        fig.update_xaxes(range=[0, 105])
+        st.plotly_chart(ui.style_figure(fig, 280), config={"displayModeBar": False}, width="stretch",
+                        key="pf_scores")
+    with right.container(border=True):
+        st.markdown('<div class="card-title">Issues by dimension — all companies</div>', unsafe_allow_html=True)
+        latest_ids = [r["upload_id"] for r in rows]
+        dims = conn.execute(
+            "SELECT CASE WHEN dimension = 'accuracy' THEN 'validity' ELSE dimension END, count(*) FROM issues "
+            "WHERE upload_id = ANY(%s) AND status <> 'rejected' GROUP BY 1 ORDER BY 2", (latest_ids,),
+        ).fetchall()
+        fig = go.Figure(go.Bar(x=[n for _, n in dims], y=[d.replace("_", " ") for d, _ in dims], orientation="h",
+                               marker_color=ui.BLUE, hovertemplate="%{y}: %{x}<extra></extra>"))
+        st.plotly_chart(ui.style_figure(fig, 280), config={"displayModeBar": False}, width="stretch",
+                        key="pf_dims")
+
+    with st.container(border=True):
+        st.markdown('<div class="card-title">Data quality over time</div>', unsafe_allow_html=True)
+        trend = conn.execute(
+            "SELECT w.name, COALESCE(u.data_as_of, u.upload_date::date), s.overall_score FROM uploads u "
+            "JOIN workspaces w ON w.slug = u.source_client JOIN dq_scores s ON s.upload_id = u.id "
+            "ORDER BY 2, u.id").fetchall()
+        palette = [ui.SAGE, ui.LAVENDER, ui.MUSTARD, ui.BLUE, ui.CORAL, ui.MUTED]
+        fig = go.Figure()
+        for n, name in enumerate(sorted({t[0] for t in trend})):
+            pts = [t for t in trend if t[0] == name]
+            fig.add_scatter(x=[p[1] for p in pts], y=[float(p[2]) for p in pts], mode="lines+markers", name=name,
+                            line=dict(color=palette[n % len(palette)], width=2.5, shape="spline"),
+                            hovertemplate=name + " · %{x|%d %b %Y}: %{y:.0f}/100<extra></extra>")
+        fig.update_yaxes(range=[0, 100])
+        st.plotly_chart(ui.style_figure(fig, 280).update_layout(showlegend=True, legend=dict(orientation="h", y=-0.2)),
+                        config={"displayModeBar": False}, width="stretch", key="pf_trend")
+
+    st.markdown('<div class="card-title" style="margin-top:6px">Companies</div>', unsafe_allow_html=True)
     _company_cards(conn)
 
 
@@ -711,14 +790,12 @@ def _open_issue_thread(conn, issue: dict, aliases: dict) -> None:
 
 
 def _render_chat(conn, upload: dict) -> None:
+    """ChatGPT-style: thread list on the left; on the right an open
+    conversation filling the screen with the question bar directly under it."""
     uid, client = upload["id"], upload["source_client"]
     username = _username()
     aliases = _aliases(conn, client)
     key = f"chat_thread_{client}"
-
-    st.markdown('<div class="page-title">Ask</div>', unsafe_allow_html=True)
-    st.caption("Plain-English answers about this company's audits. The assistant only uses the audit results, "
-               "statistics and verified descriptions — never your full data — and says so when it can't answer.")
 
     threads = chat_threads.list_threads(conn, client, username)
     ids = {t["id"] for t in threads}
@@ -726,37 +803,33 @@ def _render_chat(conn, upload: dict) -> None:
         st.session_state[key] = threads[0]["id"] if threads else None
     active = st.session_state[key]
 
-    side, main = st.columns([1, 3], gap="medium")
-    with side.container(border=True, height=620, key="chat_threads"):
+    side, main = st.columns([1, 3.4], gap="large")
+    with side:
         if st.button("New chat", icon=":material/add:", type="primary", width="stretch", key="chat_new"):
             st.session_state[key] = chat_threads.create_thread(conn, client, username)
             st.rerun()
-        if not threads:
-            st.caption("No chats yet. Ask a question to start one.")
-        for t in threads:
-            label = t["title"] if len(t["title"]) <= 34 else t["title"][:33] + "…"
-            if st.button(label, key=f"thread_{t['id']}", width="stretch",
-                         type="secondary" if t["id"] == active else "tertiary",
-                         help=f"{t['message_count']} message(s) · {t['updated_at']:%d %b %H:%M}"):
-                st.session_state[key] = t["id"]
-                st.rerun()
+        with st.container(height=600, border=False, key="chat_threads"):
+            if not threads:
+                st.caption("Your chats appear here.")
+            for t in threads:
+                label = t["title"] if len(t["title"]) <= 34 else t["title"][:33] + "…"
+                if st.button(label, key=f"thread_{t['id']}", width="stretch",
+                             type="secondary" if t["id"] == active else "tertiary",
+                             help=f"{t['message_count']} message(s) · {t['updated_at']:%d %b %H:%M}"):
+                    st.session_state[key] = t["id"]
+                    st.rerun()
 
     with main:
         audit_issues = repository.fetch_issues(conn, uid)
         attached = chat_threads.thread_issues(conn, active) if active else []
         options = {i["id"]: i for i in audit_issues} | {i["id"]: i for i in attached}
-        head, report_b, tools = st.columns([4.6, 1.2, 1.2], vertical_alignment="bottom")
+        head, report_b, tools = st.columns([4.6, 1, 1], vertical_alignment="bottom")
         chosen = head.multiselect(
             "Issues in this chat", list(options), default=[i["id"] for i in attached],
             format_func=lambda i: _issue_option_label(options[i], aliases),
             placeholder="General question about this audit — or pick issues to discuss",
-            key=f"chat_issues_{active}",
+            key=f"chat_issues_{active}", label_visibility="collapsed",
         )
-        if active and tools.button("Archive", icon=":material/archive:", key=f"chat_archive_{active}",
-                                   width="stretch", help="Hide this chat from the list"):
-            chat_threads.archive_thread(conn, active)
-            st.session_state[key] = None
-            st.rerun()
         if active and set(chosen) != {i["id"] for i in attached}:
             for i in set(chosen) - {i["id"] for i in attached}:
                 chat_threads.attach_issue(conn, active, i)
@@ -764,25 +837,32 @@ def _render_chat(conn, upload: dict) -> None:
                 chat_threads.detach_issue(conn, active, i)
             st.rerun()
         focus = [options[i] for i in chosen]
+        history = chat_threads.messages(conn, active) if active else []
         if report_b.button("Report", icon=":material/summarize:", key=f"chat_report_{active}", width="stretch",
                            help="Create a report from this chat"):
-            _report_dialog(conn, upload, focus, [dict(m) for m in chat_threads.messages(conn, active)]
-                           if active else [], from_chat=True)
+            _report_dialog(conn, upload, focus, [dict(m) for m in history], from_chat=True)
+        if active and tools.button("", icon=":material/archive:", key=f"chat_archive_{active}",
+                                   width="stretch", help="Archive this chat"):
+            chat_threads.archive_thread(conn, active)
+            st.session_state[key] = None
+            st.rerun()
 
-        history = chat_threads.messages(conn, active) if active else []
-        with st.container(border=True, height=430, key="chat_scroll"):
+        picked = None
+        with st.container(height=520, border=False, key="chat_scroll"):
             if not history:
-                st.markdown('<div class="card-sub">Ask anything about this audit — for example what to fix '
-                            'first, what an issue means, or how to explain the results to a manager.</div>',
-                            unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="chat-empty"><div class="chat-empty-title">What would you like to know?</div>'
+                    '<div class="chat-empty-sub">Ask about this audit — what to fix first, what an issue means, or '
+                    'how to explain the results to a manager. Answers use only audit results and statistics.'
+                    '</div></div>', unsafe_allow_html=True)
+                picked = st.pills("Suggestions", ISSUE_STARTERS if focus else GENERAL_STARTERS,
+                                  key=f"starter_{active}", label_visibility="collapsed")
             for m in history:
                 with st.chat_message(m["role"], avatar=":material/person:" if m["role"] == "user"
                                      else ":material/auto_awesome:"):
                     st.markdown(m["content"])
-        picked = st.pills("Suggestions", ISSUE_STARTERS if focus else GENERAL_STARTERS,
-                          key=f"starter_{active}_{len(history)}", label_visibility="collapsed")
+        question = st.chat_input("Ask a question…", key=f"chat_input_{client}") or picked
 
-    question = st.chat_input("Ask a question…", key=f"chat_input_{client}") or picked
     if question:
         if not active:
             active = chat_threads.create_thread(conn, client, username, issue_ids=[i["id"] for i in focus])

@@ -128,8 +128,14 @@ p, li {{ line-height: 1.6; }}
 .company-card .cscore {{ font-size: 2.3rem; font-weight: 750; line-height: 1.1; margin-top: 12px; }}
 .company-card .cstats {{ display:flex; gap:18px; margin-top: 10px; font-size: .88rem; color: var(--muted); }}
 .company-card .cstats b {{ color: var(--text); font-size: 1rem; }}
-.st-key-chat_scroll {{ height: calc(100vh - 335px) !important; min-height: 380px; }}
-.st-key-chat_threads {{ height: calc(100vh - 225px) !important; min-height: 420px; }}
+/* chat: the conversation fills the screen down to the question bar */
+.st-key-chat_scroll {{ height: calc(100vh - 290px) !important; min-height: 320px; }}
+.st-key-chat_threads {{ height: calc(100vh - 230px) !important; min-height: 320px; }}
+.chat-empty {{ text-align: center; padding: 12vh 8% 18px 8%; }}
+.chat-empty-title {{ font-size: 1.6rem; font-weight: 700; color: var(--text); }}
+.chat-empty-sub {{ margin-top: 8px; color: var(--muted); font-size: .98rem; line-height: 1.6; }}
+.st-key-chat_scroll [data-testid="stPills"] {{ display: flex; justify-content: center; }}
+[data-testid="stChatInput"] {{ border-radius: 14px; }}
 [data-testid="stSidebar"] {{ border-right: 1px solid var(--border); }}
 [data-testid="stHeader"] {{ background: transparent; }}
 h1, h2, h3, h4, h5 {{ letter-spacing: 0.1px; }}

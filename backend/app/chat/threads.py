@@ -18,10 +18,13 @@ def list_threads(conn: psycopg.Connection, source_client: str, username: str | N
 
 
 def create_thread(conn: psycopg.Connection, source_client: str, username: str | None,
-                  title: str = "New chat", issue_ids: list[int] | None = None) -> int:
+                  title: str = "New chat", issue_ids: list[int] | None = None,
+                  study_code: str | None = None) -> int:
+    """study_code flags a usability-study participant's thread (kept apart
+    from real conversations)."""
     tid = conn.execute(
-        "INSERT INTO chat_threads (source_client, username, title) VALUES (%s, %s, %s) RETURNING id",
-        (source_client, username, title[:TITLE_CHARS]),
+        "INSERT INTO chat_threads (source_client, username, title, study_code) VALUES (%s, %s, %s, %s) RETURNING id",
+        (source_client, username, title[:TITLE_CHARS], study_code),
     ).fetchone()[0]
     for issue_id in issue_ids or []:
         attach_issue(conn, tid, issue_id)

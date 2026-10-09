@@ -12,7 +12,7 @@ from app.db import repository
 APP_PATH = Path(__file__).resolve().parents[2] / "dashboard" / "app.py"
 ADMIN = {"id": 0, "username": "pytest-admin", "role": "admin"}
 REVIEWER = {"id": 0, "username": "pytest-reviewer", "role": "reviewer"}
-ALL_PAGES = ["overview", "triage", "ask", "rules", "scores", "relationships", "evaluation",
+ALL_PAGES = ["overview", "triage", "ask", "rules", "scores", "relationships", "evaluation", "study",
              "new-audit", "schema", "organisation", "settings"]
 
 
@@ -101,7 +101,7 @@ def test_all_companies_mode_renders(page):
 def test_signed_out_users_see_only_the_login_form():
     at = _app(user=None)
     assert not at.exception
-    assert [t.label for t in at.text_input] == ["Username", "Password"]
+    assert sorted(t.label for t in at.text_input) == ["Password", "Username", "Your code"]   # staff + study code
     assert "_pages" not in at.session_state
 
 

@@ -13,6 +13,7 @@ Run:
 from __future__ import annotations
 
 import html
+import os
 import sys
 import tempfile
 from collections import Counter
@@ -58,6 +59,8 @@ from app.auth import users as auth
 from app.llm import selection as llm_selection
 from app.aliases import base_client
 from app import workspaces as ws
+from app.study import participants as sp
+from app.study.setup import build_study_workspace
 
 # Temporary working name — change these two lines to rebrand the whole app.
 APP_NAME = "ClarityDQ"
@@ -151,14 +154,47 @@ def _username() -> str | None:
     return user["username"] if user else None
 
 
+def _is_participant() -> bool:
+    user = _current_user()
+    return bool(user and user["role"] == "participant")
+
+
+def _study_log(event: str, detail: dict | None = None) -> None:
+    """Record what a study participant did (system verification of tasks)."""
+    if _is_participant():
+        sp.log_event(get_conn(), _username(), event, detail)
+
+
+def _sus_url(code: str) -> str:
+    url = os.environ.get("SUS_FORM_PREFILL_URL", "").strip()
+    return url.replace("P00", code) if url else ""
+
+
 def _is_admin() -> bool:
     user = _current_user()
     return bool(user and user["role"] == "admin")
 
 
 def _render_login(conn) -> None:
-    _, mid, _ = st.columns([1, 1.2, 1])
-    with mid:
+    _, staff, gap, study, _ = st.columns([0.35, 1.2, 0.12, 1, 0.35])
+    with study.container(border=True):
+        st.markdown("### Taking part in the study?")
+        st.caption("Enter the code you were given (for example P01).")
+        with st.form("study_login"):
+            code = st.text_input("Your code", max_chars=3, placeholder="P01")
+            go = st.form_submit_button("Start", type="primary", width="stretch")
+        if go:
+            ok, msg = sp.check_code(conn, code)
+            if ok:
+                code = sp.normalise_code(code)
+                st.session_state["user"] = {"id": 0, "username": code, "role": "participant"}
+                st.session_state["username"] = code
+                st.rerun()
+            st.error(msg)
+            if "already been used" in msg and _sus_url(sp.normalise_code(code)):
+                st.markdown(f"If you haven't filled in the questionnaire yet: "
+                            f"[open it here]({_sus_url(sp.normalise_code(code))})")
+    with staff:
         st.markdown("### Sign in")
         st.caption("Use the account your administrator created for you.")
         if auth.count_users(conn) == 0:
@@ -181,7 +217,7 @@ def _render_login(conn) -> None:
 
 def _render_account_sidebar() -> None:
     user = _current_user()
-    role = "Administrator" if user["role"] == "admin" else "Reviewer"
+    role = {"admin": "Administrator", "participant": "Study participant"}.get(user["role"], "Reviewer")
     with st.sidebar.container(border=True):
         name_col, out_col = st.columns([3, 1.4], vertical_alignment="center")
         name_col.markdown(f"**{html.escape(user['username'])}**  \n:gray[{role}]")
@@ -206,11 +242,15 @@ def main() -> None:
         return
     static = Path(__file__).resolve().parent / "static"
     st.logo(str(static / f"logo-{ui.MODE}.svg"), size="large", icon_image=str(static / "icon.svg"))
+    if _is_participant():
+        _participant_main(conn)
+        return
     admin = _is_admin()
 
     ws.sync_from_uploads(conn)
     ws.refresh_names(conn)
-    companies = ws.list_workspaces(conn)
+    # study / test / replay copies are for admins only, and clearly labelled
+    companies = ws.list_workspaces(conn, kinds=ws.KINDS if admin else ("real",))
     slug = _company_picker(conn, companies, admin)
 
     upload = None
@@ -245,6 +285,165 @@ def main() -> None:
 ALL_COMPANIES = "__all__"
 
 
+def _device() -> tuple[str, str]:
+    try:
+        return sp.parse_user_agent(st.context.headers.get("User-Agent"))
+    except Exception:  # noqa: BLE001 -- no headers in tests
+        return "desktop", "Other"
+
+
+def _participant_main(conn) -> None:
+    """The unmoderated usability test: consent -> 5 tasks -> questionnaire.
+    Participants work on the study copy only; nothing they do reaches real data."""
+    code = _username()
+    ws.refresh_names(conn)
+    p = sp.get(conn, code)
+    if p is None:
+        st.error("This study code is no longer valid.")
+        st.session_state.pop("user", None)
+        return
+    device, browser = _device()
+    if device != "desktop":
+        st.warning("This study works best on a laptop or computer.", icon=":material/computer:")
+    if p["consent_at"] is None:
+        _study_consent(conn, code, device, browser)
+        return
+    task = sp.current_task(conn, code)
+    if p["status"] == "finished" or task is None:
+        _study_finished(code)
+        return
+    slug = ws.study_workspace(conn)
+    uploads = repository.list_uploads(conn, source_client=slug) if slug else []
+    if not uploads:
+        st.error("The study isn't ready yet. Please contact the researcher.")
+        return
+    _study_task_panel(conn, code, task)
+    navigation = _build_navigation(conn, slug, uploads[0], admin=False, participant=True)
+    _render_sidebar_nav(False)
+    _render_account_sidebar()
+    navigation.run()
+
+
+def _study_consent(conn, code: str, device: str, browser: str) -> None:
+    _, mid, _ = st.columns([0.5, 2, 0.5])
+    with mid:
+        st.markdown('<div class="page-title">Welcome — thank you for helping</div>', unsafe_allow_html=True)
+        st.markdown(
+            "- **ClarityDQ** checks a company's business data for mistakes — missing, wrong or inconsistent "
+            "values — and explains each problem in plain English.\n"
+            "- You'll try **5 short tasks** on a copy of anonymised audit results, then answer a short "
+            "questionnaire.\n"
+            "- Nothing you do here changes any real data. There are no right or wrong answers — we are testing "
+            "the system, not you."
+        )
+        st.info("This takes about 10 minutes. Please use a laptop or computer.", icon=":material/schedule:")
+        agree = st.checkbox("I agree to take part. My answers are anonymous and may be used in a university "
+                            f"research project. (Your code: {code})")
+        if st.button("Start", type="primary", disabled=not agree, icon=":material/play_arrow:", key="study_start"):
+            sp.give_consent(conn, code, device, browser)
+            st.rerun()
+
+
+def _study_task_panel(conn, code: str, task: int) -> None:
+    title, text = sp.TASKS[task]
+    with st.sidebar.container(border=True, key="study_panel"):
+        st.markdown(f'<div class="sidebar-section">Study · task {task} of {sp.N_TASKS}</div>',
+                    unsafe_allow_html=True)
+        st.progress((task - 1) / sp.N_TASKS)
+        st.markdown(f"**{title}**")
+        st.markdown(text)
+        answer = None
+        if task == 1:
+            answer = st.text_area("In one sentence, what is wrong?", key=f"study_answer_{code}", height=90)
+        if st.button("Done", type="primary", width="stretch", key=f"study_done_{task}", icon=":material/check:"):
+            sp.end_task(conn, code, task, "done", answer)
+            st.rerun()
+        if st.button("I couldn't do this", width="stretch", key=f"study_cant_{task}"):
+            sp.end_task(conn, code, task, "couldnt", answer)
+            st.rerun()
+
+
+def _study_finished(code: str) -> None:
+    _, mid, _ = st.columns([0.5, 2, 0.5])
+    with mid:
+        st.markdown('<div class="page-title">Thank you — one last step</div>', unsafe_allow_html=True)
+        url = _sus_url(code)
+        if url:
+            st.link_button("Last step: short questionnaire (about 4 minutes)", url, type="primary",
+                           icon=":material/assignment:", width="stretch")
+            st.caption(f"It opens in a new tab with your code ({code}) already filled in.")
+        else:
+            st.info("The questionnaire link hasn't been set up yet — please tell the researcher your code "
+                    f"({code}).")
+        st.success("Thank you for taking part! You can close this page once you've sent the questionnaire.")
+
+
+def _render_study_admin(conn) -> None:
+    st.markdown('<div class="page-title">Study</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-sub">The unmoderated usability test. Participants sign in with a code, do 5 tasks '
+                'on the study copy, then fill in the questionnaire. Nothing they do touches real data.</div>',
+                unsafe_allow_html=True)
+    slug = ws.study_workspace(conn)
+    study_uploads = repository.list_uploads(conn, source_client=slug) if slug else []
+    left, right = st.columns(2)
+    with left.container(border=True):
+        st.markdown('<div class="card-title">Study copy</div>', unsafe_allow_html=True)
+        if study_uploads:
+            u = study_uploads[0]
+            st.markdown(f"**{html.escape(client_label(slug))}** — {u['issue_count']} issues (a copy; "
+                        f"participants' decisions are kept separately).")
+        else:
+            st.warning("No study copy yet.")
+        real = repository.list_uploads(conn, source_client="hemas")
+        if real and st.button(f"Rebuild from Company A's latest audit (#{real[0]['id']})", key="study_rebuild",
+                              help="Replaces the copy — and any participant decisions on it."):
+            build_study_workspace(conn, real[0]["id"])
+            st.toast("Study copy rebuilt", icon=":material/refresh:")
+            st.rerun()
+    with right.container(border=True):
+        st.markdown('<div class="card-title">Questionnaire link</div>', unsafe_allow_html=True)
+        url = os.environ.get("SUS_FORM_PREFILL_URL", "")
+        if url and "P00" in url:
+            st.markdown(":green[Set] — the code placeholder P00 is replaced with each participant's code.")
+        elif url:
+            st.warning("SUS_FORM_PREFILL_URL is set but doesn't contain the placeholder P00.")
+        else:
+            st.warning("SUS_FORM_PREFILL_URL is not set yet (add it to the secrets).")
+
+    rows = sp.overview(conn)
+    c1, c2, c3 = st.columns([1.2, 1.2, 2])
+    if c1.button("Create codes P00–P15", icon=":material/add:", key="study_make_codes"):
+        n = sp.create_codes(conn, [f"P{i:02d}" for i in range(16)])
+        st.toast(f"{n} new code(s) created", icon=":material/check:")
+        st.rerun()
+    if c2.button("Reset pilot P00", icon=":material/restart_alt:", key="study_reset_p00",
+                 disabled=not any(r["code"] == sp.PILOT_CODE for r in rows)):
+        sp.reset(conn, sp.PILOT_CODE)
+        st.toast("P00 reset — you can pilot it again", icon=":material/restart_alt:")
+        st.rerun()
+    if rows:
+        import csv
+        import io
+        buf = io.StringIO()
+        results = sp.results_rows(conn)
+        writer = csv.DictWriter(buf, fieldnames=list(results[0]))
+        writer.writeheader()
+        writer.writerows(results)
+        c3.download_button("Download results (CSV)", data=buf.getvalue(), file_name="study_results.csv",
+                           mime="text/csv", icon=":material/download:", key="study_csv")
+        status_label = {"not_started": "Not started", "in_progress": "In progress", "finished": "Finished"}
+        st.dataframe(
+            [{"Code": r["code"], "Status": status_label[r["status"]],
+              "Started": f"{r['started_at']:%d %b %H:%M}" if r["started_at"] else "",
+              "Finished": f"{r['finished_at']:%d %b %H:%M}" if r["finished_at"] else "",
+              "Device": r["device_type"] or "", "Browser": r["browser"] or "",
+              "Tasks done (self)": r["tasks_done_self"], "Tasks verified": r["tasks_verified"]} for r in rows],
+            hide_index=True, width="stretch",
+        )
+    else:
+        st.info("No codes yet. Create P00–P15, pilot with P00, then send P01, P02… to participants.")
+
+
 def _switch_company(slug: str, audit_id: int | None = None) -> None:
     """Request a company (and optionally audit) switch from anywhere on the
     page. Applied at the top of the next run, before the switcher widget
@@ -268,7 +467,8 @@ def _company_picker(conn, companies: list[dict], admin: bool) -> str:
     slug = st.sidebar.selectbox(
         "Company", options, key="workspace",
         format_func=lambda k: "All companies" if k == ALL_COMPANIES else
-        f"{by_slug[k]['name']}  ·  {by_slug[k]['audit_count']} audit(s)",
+        f"{by_slug[k]['name']}  ·  " + (f"{ws.KIND_LABEL[by_slug[k]['kind']]}" if by_slug[k]["kind"] != "real"
+                                         else f"{by_slug[k]['audit_count']} audit(s)"),
     )
     if admin and st.sidebar.button("New company", icon=":material/add_business:", key="new_company",
                                    width="stretch"):
@@ -347,7 +547,7 @@ def _choose_company(conn, purpose: str) -> None:
 
 
 def _company_cards(conn, button_label: str = "Open") -> None:
-    companies = ws.list_workspaces(conn)
+    companies = ws.list_workspaces(conn, kinds=("real",))
     if not companies:
         st.info("No companies yet. Use **New company** in the sidebar to create one.")
         return
@@ -389,6 +589,7 @@ def _portfolio_rows(conn) -> list[dict]:
             "  count(i.id) FILTER (WHERE i.source = 'llm') AS ai "
             "FROM workspaces w JOIN latest l ON l.source_client = w.slug "
             "LEFT JOIN dq_scores s ON s.upload_id = l.id LEFT JOIN issues i ON i.upload_id = l.id "
+            "WHERE w.kind = 'real' "
             "GROUP BY w.name, w.slug, l.id, l.as_of, l.row_count, s.overall_score ORDER BY w.name"
         ).fetchall()
 
@@ -445,7 +646,7 @@ def _render_portfolio(conn) -> None:
         trend = conn.execute(
             "SELECT w.name, COALESCE(u.data_as_of, u.upload_date::date), s.overall_score FROM uploads u "
             "JOIN workspaces w ON w.slug = u.source_client JOIN dq_scores s ON s.upload_id = u.id "
-            "ORDER BY 2, u.id").fetchall()
+            "WHERE w.kind = 'real' ORDER BY 2, u.id").fetchall()
         palette = [ui.SAGE, ui.LAVENDER, ui.MUSTARD, ui.BLUE, ui.CORAL, ui.MUTED]
         fig = go.Figure()
         for n, name in enumerate(sorted({t[0] for t in trend})):
@@ -483,7 +684,8 @@ def _report_dialog(conn, upload: dict, issues: list[dict] | None = None,
                           width="stretch", key="dl_std_docx")
         b.download_button("PDF", data=lambda: to_pdf(standard_report_md(conn, upload)),
                           file_name=f"{stem}_report.pdf", mime="application/pdf", icon=":material/picture_as_pdf:",
-                          width="stretch", key="dl_std_pdf")
+                          width="stretch", key="dl_std_pdf",
+                          on_click=_study_log, args=("pdf_downloaded", {"kind": "standard"}))
 
     with tabs["Custom report with AI"]:
         scope = (f"{len(issues)} selected issue(s)" if issues else "the whole audit") + \
@@ -512,7 +714,7 @@ def _report_dialog(conn, upload: dict, issues: list[dict] | None = None,
                               mime=DOCX_MIME, icon=":material/description:", width="stretch", key="dl_ai_docx")
             b.download_button("PDF", data=to_pdf(md), file_name=f"{stem}_custom_report.pdf",
                               mime="application/pdf", icon=":material/picture_as_pdf:", width="stretch",
-                              key="dl_ai_pdf")
+                              key="dl_ai_pdf", on_click=_study_log, args=("pdf_downloaded", {"kind": "custom"}))
 
 
 @st.dialog("Import an export and run an audit", width="large")
@@ -533,11 +735,12 @@ PAGE_SPECS = {
     "schema": ("Schema review", "menu_book", "Administration"),
     "organisation": ("Organisation", "domain", "Administration"),
     "settings": ("Settings", "settings", "Administration"),
+    "study": ("Study", "science", "Administration"),
 }
-ADMIN_PAGES = {"new-audit", "schema", "organisation", "settings"}
+ADMIN_PAGES = {"new-audit", "schema", "organisation", "settings", "study"}
 
 
-def _build_navigation(conn, slug: str, upload: dict | None, admin: bool):
+def _build_navigation(conn, slug: str, upload: dict | None, admin: bool, participant: bool = False):
     """Pages render only when selected (st.tabs would run all of them on
     every click). Navigation is drawn by _render_sidebar_nav so the company
     switcher can sit above it. Start page: ?page=<path> or
@@ -583,9 +786,12 @@ def _build_navigation(conn, slug: str, upload: dict | None, admin: bool):
         "schema": company_page("Schema review", lambda u: _render_schema_review(conn, u)),
         "organisation": company_page("Organisation", lambda u: _render_organisation(conn, u)),
         "settings": lambda: _render_settings(conn),
+        "study": lambda: _render_study_admin(conn),
     }
     start = st.session_state.get("start_page") or st.query_params.get("page") or "overview"
     allowed = [k for k in PAGE_SPECS if admin or k not in ADMIN_PAGES]
+    if participant:
+        allowed = ["overview", "triage", "ask"]
     if start not in allowed:
         start = "overview"
     pages = {}
@@ -600,11 +806,13 @@ def _build_navigation(conn, slug: str, upload: dict | None, admin: bool):
 FILTER_LABELS = {"rule": "Rules", "llm": "AI", "flagged": "To review", "yes": "Yes", "no": "No"}
 
 
-def _filter_bar() -> dict:
-    cols = st.columns(6)
+def _filter_bar(tables: list[str]) -> dict:
+    cols = st.columns(7)
     specs = [
+        ("table", "Table", tables, ALL),
         ("source", "Found by", ["rule", "llm"], ALL),
-        ("status", "Status", STATUSES, "flagged"),
+        # participants keep the issue they just decided in view (study tasks 2-3)
+        ("status", "Status", STATUSES, ALL if _is_participant() else "flagged"),
         ("severity", "Severity", ["high", "medium", "low"], ALL),
         ("dimension", "Dimension", DIMENSIONS, ALL),
         ("trend", "Trend", TRENDS, ALL),
@@ -615,21 +823,22 @@ def _filter_bar() -> dict:
         choices = [ALL, *options]
         filters[key] = col.selectbox(
             label, choices, index=choices.index(default), key=f"filter_{key}",
-            format_func=lambda v: "All" if v == ALL else FILTER_LABELS.get(v, v.replace("_", " ").capitalize()),
+            format_func=lambda v: "All" if v == ALL else FILTER_LABELS.get(
+                v, v if key == "table" else v.replace("_", " ").capitalize()),
         )
     return filters
 
 
 def _render_triage(conn, upload: dict) -> None:
     uid = upload["id"]
-    filters = _filter_bar()
-    issues = repository.fetch_issues(
-        conn, uid,
-        source=_none_if_all(filters["source"]),
-        dimension=_none_if_all(filters["dimension"]),
-        severity=_none_if_all(filters["severity"]),
-        status=_none_if_all(filters["status"]),
-    )
+    issues = repository.fetch_issues(conn, uid)
+    if _is_participant():   # a participant sees only their own decisions
+        issues = sp.overlay(issues, sp.decisions(conn, _username()), _username())
+    filters = _filter_bar(sorted({i["table_name"] for i in issues}))
+    for key in ("table", "source", "dimension", "severity", "status"):
+        field = "table_name" if key == "table" else key
+        if filters[key] != ALL:
+            issues = [i for i in issues if i.get(field) == filters[key]]
     if filters["fixable"] != ALL:
         issues = [i for i in issues if i.get("fixable") == filters["fixable"]]
     if filters["trend"] == "recurring":
@@ -658,8 +867,11 @@ def _render_triage(conn, upload: dict) -> None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width="stretch",
             help="Formatted workbook with an issue sheet and a summary by dimension and severity.",
+            on_click=_study_log, args=("excel_downloaded", {"table": _none_if_all(filters["table"]),
+                                                            "rows": len(issues)}),
         )
-        _render_bulk_actions(conn, [i["id"] for i in issues])
+        if not _is_participant():
+            _render_bulk_actions(conn, [i["id"] for i in issues])
     else:
         st.info("No issues match these filters. Try setting **Status** to *All*.")
     for issue in issues:
@@ -785,7 +997,8 @@ def _open_issue_thread(conn, issue: dict, aliases: dict) -> None:
     """Start a thread about one issue and make it the active one."""
     col = display_columns(aliases, issue["table_name"], issue["column_name"])
     title = f"Issue #{issue['id']} · {issue['table_name']}" + (f".{col}" if col else "")
-    tid = chat_threads.create_thread(conn, issue["source_client"], _username(), title, [issue["id"]])
+    tid = chat_threads.create_thread(conn, issue["source_client"], _username(), title, [issue["id"]],
+                                     study_code=_username() if _is_participant() else None)
     st.session_state[f"chat_thread_{issue['source_client']}"] = tid
 
 
@@ -806,7 +1019,8 @@ def _render_chat(conn, upload: dict) -> None:
     side, main = st.columns([1, 3.4], gap="large")
     with side:
         if st.button("New chat", icon=":material/add:", type="primary", width="stretch", key="chat_new"):
-            st.session_state[key] = chat_threads.create_thread(conn, client, username)
+            st.session_state[key] = chat_threads.create_thread(
+                conn, client, username, study_code=username if _is_participant() else None)
             st.rerun()
         with st.container(height=600, border=False, key="chat_threads"):
             if not threads:
@@ -865,9 +1079,11 @@ def _render_chat(conn, upload: dict) -> None:
 
     if question:
         if not active:
-            active = chat_threads.create_thread(conn, client, username, issue_ids=[i["id"] for i in focus])
+            active = chat_threads.create_thread(conn, client, username, issue_ids=[i["id"] for i in focus],
+                                                study_code=username if _is_participant() else None)
             st.session_state[key] = active
         chat_threads.add_message(conn, active, uid, "user", question, username)
+        _study_log("chat_sent", {"issues": [i["id"] for i in focus]})
         with st.spinner("Thinking…"):
             try:
                 reply = assistant.answer(conn, upload, question, [dict(m) for m in history], focus)
@@ -1834,6 +2050,7 @@ def _issue_row(conn, issue: dict, aliases: dict) -> None:
                        width="stretch"):
         _decide(conn, issue["id"], "rejected")
     if open_b.button("Open", key=f"open_{issue['id']}", icon=":material/open_in_full:", width="stretch"):
+        _study_log("detail_opened", {"issue_id": issue["id"], "severity": issue["severity"]})
         _issue_dialog(conn, issue["id"])
 
 
@@ -1843,6 +2060,8 @@ def _issue_dialog(conn, issue_id: int) -> None:
     if issue is None:
         st.error("This issue no longer exists.")
         return
+    if _is_participant():
+        issue = sp.overlay([issue], sp.decisions(conn, _username()), _username())[0]
     aliases = _aliases(conn, issue["source_client"])
     sev_color = SEVERITY_COLOR.get(issue["severity"], ui.MUTED)
     fix = ("Fixable from the data itself" if issue.get("fixable") == "yes"
@@ -1903,7 +2122,10 @@ def _issue_dialog(conn, issue_id: int) -> None:
                ("Unsure", "considered", ":material/help:", "secondary")]
     for col, (label, status, icon, kind) in zip(b, choices):
         if col.button(label, key=f"dlg_{status}_{issue_id}", icon=icon, type=kind, width="stretch"):
-            repository.update_issue_status(conn, issue_id, status, note.strip() or None, reviewed_by=_username())
+            if _is_participant():
+                sp.save_decision(conn, _username(), issue_id, status, note)
+            else:
+                repository.update_issue_status(conn, issue_id, status, note.strip() or None, reviewed_by=_username())
             st.session_state["flash"] = f"Issue #{issue_id} marked {ui.STATUS[status][0].lower()}"
             st.rerun()
     if b[3].button("Discuss in chat", key=f"dlg_chat_{issue_id}", icon=":material/forum:", width="stretch"):
@@ -1916,6 +2138,10 @@ def _issue_dialog(conn, issue_id: int) -> None:
 
 
 def _decide(conn, issue_id: int, status: str) -> None:
+    if _is_participant():
+        own = sp.decisions(conn, _username()).get(issue_id) or {}
+        sp.save_decision(conn, _username(), issue_id, status, own.get("note"))
+        st.rerun()
     issue = repository.fetch_issue(conn, issue_id)
     repository.update_issue_status(conn, issue_id, status, (issue or {}).get("user_note"), reviewed_by=_username())
     st.rerun()

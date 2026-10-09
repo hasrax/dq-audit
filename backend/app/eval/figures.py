@@ -2,7 +2,7 @@
 
 Renders the rule-only / LLM-only / both split as a horizontal stacked bar
 per dimension -- the headline complementarity finding, as a PNG for
-Chapter 4. Uses the Agg backend (no display) so it runs headless. Colours
+Chapter 5. Uses the Agg backend (no display) so it runs headless. Colours
 follow the app: rule = blue (Type 1), LLM = purple (Type 2), both = teal;
 segment counts are drawn on the bars so the figure is not colour-alone.
 """

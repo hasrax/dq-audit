@@ -7,6 +7,7 @@ class StubMasker(sync_cloud.Masker):
         self.types = {(1, "T", "col_1"): "int", (1, "T", "col_2"): "varchar", (1, "T", "col_3"): "int"}
         self.clients = {1: "x"}
         self._overrides = {"x": {"T": {"mask": {"col_3"}}}}
+        self.excluded_clients, self.excluded_uploads = set(), set()
 
 
 def test_scrub_masks_long_digit_runs_only():

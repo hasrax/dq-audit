@@ -6,7 +6,7 @@ after injection a detected error in those columns is attributable to a
 known injection. Recall is already exact against the injected labels;
 this cleaning is what makes precision interpretable.
 
-Threat to validity (documented for Chapter 4): cleaning targets the
+Threat to validity (documented for Chapter 5): cleaning targets the
 injected classes on the injected columns only -- the real base may still
 contain unlabelled pre-existing errors elsewhere, so precision is
 reported as "within the injected scope".

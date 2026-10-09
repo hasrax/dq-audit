@@ -1,4 +1,4 @@
-"""Live evaluation metrics for the Evaluation page (and Chapter 4).
+"""Live evaluation metrics for the Evaluation page (and Chapter 5).
 
 Everything is computed from the repository as it stands, so the numbers
 update as reviewers triage -- human decisions are the ground truth:
@@ -34,6 +34,8 @@ def scope_issues(conn: psycopg.Connection, upload_id: int | None = None,
         sql, params = sql + " WHERE i.upload_id = %s", (upload_id,)
     elif source_client is not None:
         sql, params = sql + " WHERE u.source_client = %s", (source_client,)
+    else:   # all companies = real workspaces only (no study / test / replay copies)
+        sql += " WHERE u.source_client IN (SELECT slug FROM workspaces WHERE kind = 'real')"
     with conn.cursor(row_factory=dict_row) as cur:
         return cur.execute(sql + " ORDER BY i.id", params).fetchall()
 
@@ -107,6 +109,8 @@ def projection_error(conn: psycopg.Connection, source_client: str | None = None)
     if source_client:
         base = base_client(source_client)
         sql, params = sql + " AND u.source_client IN (%s, %s)", (base, base + REPLAY_SUFFIX)
+    else:   # the replay is the documented source of projections; study / test copies never count
+        sql += " AND u.source_client IN (SELECT slug FROM workspaces WHERE kind IN ('real', 'replay'))"
     rows = conn.execute(sql, params).fetchall()
     if not rows:
         return {"n": 0}

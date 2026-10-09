@@ -19,10 +19,22 @@ CLIENT_LABELS_PATH = Path(__file__).resolve().parents[2] / "config" / "client_la
 REPLAY_SUFFIX = "_replay"
 
 
+_CONFIG_PARENT: dict[str, str] = {}
+
+
+def set_config_parents(parents: dict[str, str]) -> None:
+    """Workspaces that reuse another workspace's configuration (workspaces.
+    config_from), e.g. the study copy of Company A; see app.workspaces."""
+    _CONFIG_PARENT.clear()
+    _CONFIG_PARENT.update(parents)
+
+
 def base_client(source_client: str | None) -> str | None:
     """The client whose config (privacy overrides, aliases, schema docs) a
-    source uses. A time-sliced replay ("hemas_replay") is the same
-    organisation's data, so it shares the base client's configuration."""
+    source uses. A time-sliced replay ("hemas_replay") or a study copy is
+    the same organisation's data, so it shares that configuration."""
+    if source_client in _CONFIG_PARENT:
+        return _CONFIG_PARENT[source_client]
     if source_client and source_client.endswith(REPLAY_SUFFIX):
         return source_client[: -len(REPLAY_SUFFIX)]
     return source_client

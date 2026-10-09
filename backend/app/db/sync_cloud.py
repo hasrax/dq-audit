@@ -12,7 +12,11 @@ the hosted admin separately. Row ids are preserved so every link
 (rule_ref, previous_issue_id, projections) still resolves.
 
 Usage (reads CLOUD_DATABASE_URL from backend/.env):
-    python -m app.db.sync_cloud [--replace] [--dry-run]
+    python -m app.db.sync_cloud [--replace] [--dry-run] [--discard-study-results]
+
+Never copied: local-only workspaces (Companies D-G), test/injection data,
+user accounts, chat and study sessions. --replace refuses to run once
+real study participants have started on the hosted database.
 """
 from __future__ import annotations
 
@@ -32,7 +36,7 @@ from app.privacy.pseudonymize import load_overrides, mask_value
 # FK-safe order (parents first; issues are inserted by id so a recurring
 # issue's previous_issue_id always exists already).
 TABLES = [
-    "uploads", "profiles", "relationships", "rules", "issues", "issue_projections",
+    "workspaces", "uploads", "profiles", "relationships", "rules", "issues", "issue_projections",
     "dq_scores", "schema_doc_tables", "schema_doc_columns", "org_notes",
     "rule_suppressions", "llm_prompt_log",
 ]
@@ -65,6 +69,10 @@ class Masker:
         }
         self.clients = dict(local.execute("SELECT id, source_client FROM uploads").fetchall())
         self._overrides: dict[str, dict] = {}
+        # Never hosted: local-only workspaces (Companies D-G) and test (injection) data.
+        self.excluded_clients = {r[0] for r in local.execute(
+            "SELECT slug FROM workspaces WHERE local_only OR kind = 'test'").fetchall()}
+        self.excluded_uploads = {u for u, c in self.clients.items() if c in self.excluded_clients}
 
     def _override_mask(self, upload_id: int, table: str) -> set[str]:
         client = base_client(self.clients.get(upload_id))
@@ -85,6 +93,9 @@ class Masker:
 
 def transform(table: str, row: dict, m: Masker) -> dict | None:
     row = dict(row)
+    if row.get("upload_id") in m.excluded_uploads or row.get("source_client") in m.excluded_clients \
+            or (table == "workspaces" and row["slug"] in m.excluded_clients):
+        return None
     if table == "profiles":
         if m.is_personal(row["upload_id"], row["table_name"], row["column_name"]):
             row["min_val"] = mask_value(row["min_val"]) if row["min_val"] is not None else None
@@ -137,7 +148,8 @@ def copy_table(local, cloud, table: str, m: Masker, dry_run: bool) -> int:
     return len(rows)
 
 
-def sync(local_url: str, cloud_url: str, replace: bool = False, dry_run: bool = False) -> dict[str, int]:
+def sync(local_url: str, cloud_url: str, replace: bool = False, dry_run: bool = False,
+         discard_study: bool = False) -> dict[str, int]:
     local = psycopg.connect(local_url)
     cloud = psycopg.connect(cloud_url)
     try:
@@ -146,6 +158,12 @@ def sync(local_url: str, cloud_url: str, replace: bool = False, dry_run: bool = 
         existing = cloud.execute("SELECT count(*) FROM uploads").fetchone()[0]
         if existing and not replace and not dry_run:
             raise SystemExit(f"cloud database already has {existing} uploads; re-run with --replace to overwrite")
+        started = cloud.execute(
+            "SELECT count(*) FROM study_participants WHERE status <> 'not_started' AND code <> 'P00'").fetchone()[0]
+        if replace and started and not discard_study and not dry_run:
+            raise SystemExit(f"{started} study participant(s) have already started on the hosted database; "
+                             "replacing would delete their results. Download them first (Study page), then "
+                             "re-run with --discard-study-results if you really mean it.")
         if replace and not dry_run:
             cloud.execute("TRUNCATE " + ", ".join(TABLES) + ", chat_messages RESTART IDENTITY CASCADE")
         masker = Masker(local)
@@ -169,7 +187,8 @@ def main(argv: list[str] | None = None) -> None:
     if "sslmode=" not in cloud_url:
         cloud_url += ("&" if "?" in cloud_url else "?") + "sslmode=require"
     dry = "--dry-run" in argv
-    counts = sync(settings.db_url, cloud_url, replace="--replace" in argv, dry_run=dry)
+    counts = sync(settings.db_url, cloud_url, replace="--replace" in argv, dry_run=dry,
+                  discard_study="--discard-study-results" in argv)
     verb = "would copy" if dry else "copied"
     for table, n in counts.items():
         print(f"{verb} {n:>6} rows  {table}")

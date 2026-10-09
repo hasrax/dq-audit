@@ -1,0 +1,6 @@
+{
+  "_comment": "Company D (restaurant management system). Always masked before any AI call or hosted copy: names, phone numbers stored as digits, addresses, member card numbers and free-text remarks.",
+  "MembersMaster": {"mask": ["MemName", "MemTel", "Address", "Location", "LoyaltyCode", "Remarks"]},
+  "Employees": {"mask": ["EmpName"]},
+  "InvoiceCancel": {"mask": ["Remarks"]}
+}

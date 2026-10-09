@@ -394,12 +394,15 @@ def _render_study_admin(conn) -> None:
                         f"participants' decisions are kept separately).")
         else:
             st.warning("No study copy yet.")
-        real = repository.list_uploads(conn, source_client="hemas")
-        if real and st.button(f"Rebuild from Company A's latest audit (#{real[0]['id']})", key="study_rebuild",
-                              help="Replaces the copy — and any participant decisions on it."):
-            build_study_workspace(conn, real[0]["id"])
-            st.toast("Study copy rebuilt", icon=":material/refresh:")
-            st.rerun()
+        real = [c for c in ws.list_workspaces(conn, kinds=("real",)) if c["audit_count"]]
+        if real:
+            src = st.selectbox("Build the study copy from", [c["slug"] for c in real], key="study_src",
+                               format_func=lambda k: f"{client_label(k)} — latest audit")
+            if st.button("Build study copy", key="study_rebuild", icon=":material/content_copy:",
+                         help="Replaces the current study copy — and any participant decisions on it."):
+                build_study_workspace(conn, repository.list_uploads(conn, source_client=src)[0]["id"])
+                st.toast("Study copy rebuilt", icon=":material/refresh:")
+                st.rerun()
     with right.container(border=True):
         st.markdown('<div class="card-title">Questionnaire link</div>', unsafe_allow_html=True)
         url = os.environ.get("SUS_FORM_PREFILL_URL", "")

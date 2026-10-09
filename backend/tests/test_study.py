@@ -53,7 +53,7 @@ def _source_audit(conn):
 
 def test_study_copy_is_fresh_linked_and_excluded(conn):
     src = _source_audit(conn)
-    dst = build_study_workspace(conn, src, name="pytest study", slug=STUDY)
+    dst = build_study_workspace(conn, src, name="pytest study", slug=STUDY, replace_others=False)
     copied = repository.fetch_issues(conn, dst)
     assert len(copied) == 2 and all(i["status"] == "flagged" and i["user_note"] is None for i in copied)
     rule_issue = next(i for i in copied if i["source"] == "rule")
@@ -66,7 +66,7 @@ def test_study_copy_is_fresh_linked_and_excluded(conn):
 
 def test_participant_lifecycle_and_isolation(conn):
     src = _source_audit(conn)
-    dst = build_study_workspace(conn, src, name="pytest study", slug=STUDY)
+    dst = build_study_workspace(conn, src, name="pytest study", slug=STUDY, replace_others=False)
     sp.create_codes(conn, CODES)
     assert sp.check_code(conn, "p90") == (True, "")
     assert sp.check_code(conn, "P99")[0] is False

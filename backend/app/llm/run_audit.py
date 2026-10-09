@@ -9,10 +9,12 @@ applied here.
 Usage:
     python -m app.llm.run_audit <input_dir> [output_dir] [--tables T1,T2]
 
-Per-client PII overrides (e.g. Ussawatte CustomerMaster's phone-as-int
-col_4 and geo-coords col_21) are passed programmatically via `overrides`
-when calling audit_directory; the CLI audits with heuristic-only PII
-detection.
+Per-client PII overrides (phone numbers stored as integers, national IDs,
+geo-coordinates -- columns the heuristic cannot see) are loaded
+automatically from config/privacy/<client>.json on every run, so no
+entry point can skip them; explicit `overrides` are merged on top.
+Verified schema documentation for the client, if any, is prepended to
+each table's prompt.
 """
 from __future__ import annotations
 
@@ -22,9 +24,12 @@ from pathlib import Path
 
 from app.io.loader import list_data_files, load_table
 from app.llm.auditor import audit_table
+from app.llm.feedback import estimate_tokens, feedback_context
+from app.llm.prompt import SYSTEM_PROMPT, build_user_payload
 from app.llm.client import LLMClient
 from app.privacy.pseudonymize import (
     classify_pii_columns,
+    load_overrides,
     pseudonymize_profile,
     pseudonymize_sample,
 )
@@ -32,6 +37,7 @@ from app.profiler.profile import profile_table
 from app.profiler.relationships import find_relationships
 from app.profiler.sampling import DEFAULT_SEED, build_stratified_sample
 from app.profiler.types import infer_types
+from app.schema_docs.store import get_schema_context
 
 DEFAULT_SAMPLE_ROWS = 18
 
@@ -43,10 +49,18 @@ def audit_directory(
     sample_max_rows: int = DEFAULT_SAMPLE_ROWS,
     seed: int = DEFAULT_SEED,
     client: LLMClient | None = None,
+    source_client: str | None = None,
+    prompt_log: list[dict] | None = None,
 ) -> dict[str, list[dict]]:
-    """Run the LLM auditor over every (or the named) tables in a directory."""
+    """Run the LLM auditor over every (or the named) tables in a directory.
+
+    prompt_log, when given, collects one entry per table recording which
+    feedback examples and notes went into its prompt (saved with the
+    upload by persist_audit -- the evaluation hook for feedback effects).
+    """
     client = client or LLMClient()
-    overrides = overrides or {}
+    source_client = source_client or Path(data_dir).name
+    overrides = _merge_overrides(load_overrides(source_client), overrides or {})
 
     loaded, types_by, profiles = {}, {}, {}
     for path in list_data_files(data_dir):
@@ -59,6 +73,7 @@ def audit_directory(
     relationships = find_relationships(loaded, types_by)
     targets = tables or list(loaded)
 
+    conn = _try_connect()
     results: dict[str, list[dict]] = {}
     for name in targets:
         df, profile = loaded[name], profiles[name]
@@ -71,8 +86,42 @@ def audit_directory(
         # both must be pseudonymized before the (possibly cloud) model sees them.
         masked_profile = pseudonymize_profile(profile, pii)
         masked_sample = pseudonymize_sample(sample, pii)
-        results[name] = audit_table(masked_profile, masked_sample, relationships, client=client)
+        context = get_schema_context(source_client, name, conn=conn) if conn else ""
+        base_tokens = estimate_tokens(
+            SYSTEM_PROMPT, context, build_user_payload(masked_profile, masked_sample, relationships)
+        )
+        org_context, log = feedback_context(conn, source_client, name, base_tokens)
+        if log is not None and prompt_log is not None:
+            prompt_log.append({**log, "schema_context": bool(context)})
+        results[name] = audit_table(
+            masked_profile, masked_sample, relationships, client=client,
+            schema_context=context, org_context=org_context,
+        )
+    if conn is not None:
+        conn.close()
     return results
+
+
+def _try_connect():
+    """Repository connection for schema docs + feedback; None if unreachable
+    (the audit then runs exactly as without those features)."""
+    try:
+        from app.db import repository
+
+        conn = repository.connect()
+        repository.apply_schema(conn)
+        return conn
+    except Exception:  # noqa: BLE001 -- the LLM audit must not depend on the DB
+        return None
+
+
+def _merge_overrides(base: dict, extra: dict) -> dict[str, dict[str, set[str]]]:
+    merged = {t: {k: set(v.get(k, ())) for k in ("mask", "keep")} for t, v in base.items()}
+    for table, v in extra.items():
+        entry = merged.setdefault(table, {"mask": set(), "keep": set()})
+        for k in ("mask", "keep"):
+            entry[k] |= set(v.get(k) or ())
+    return merged
 
 
 def main(argv: list[str] | None = None) -> None:

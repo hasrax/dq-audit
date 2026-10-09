@@ -65,6 +65,7 @@ def run_rules(directory, source_client=None, reference_date: datetime | None = N
         fk_columns_by_table.setdefault(rel["child_table"], set()).add(rel["child_column"])
 
     issues: list[dict] = []
+    rules: list[dict] = []
 
     for name, df in tables.items():
         types = types_by_table[name]
@@ -74,15 +75,16 @@ def run_rules(directory, source_client=None, reference_date: datetime | None = N
         pk = choose_primary_key(df)
         ordering_exclude = set(fk_columns) | ({pk} if pk else set())
 
-        issues += check_completeness(name, df, profile, fk_columns=fk_columns)
-        issues += check_validity(name, df, profile)
-        issues += check_uniqueness(name, df, profile)
-        issues += check_timeliness(name, df, profile, reference_date=reference_date)
-        issues += check_ordering(name, df, types, distinct_counts=distinct_counts, exclude_columns=ordering_exclude)
-        issues += check_arithmetic(name, df, types, distinct_counts=distinct_counts)
+        issues += check_completeness(name, df, profile, fk_columns=fk_columns, rules=rules)
+        issues += check_validity(name, df, profile, rules=rules)
+        issues += check_uniqueness(name, df, profile, rules=rules)
+        issues += check_timeliness(name, df, profile, reference_date=reference_date, rules=rules)
+        issues += check_ordering(name, df, types, distinct_counts=distinct_counts,
+                                 exclude_columns=ordering_exclude, rules=rules)
+        issues += check_arithmetic(name, df, types, distinct_counts=distinct_counts, rules=rules)
 
     # Cross-table referential integrity runs once over all tables at once.
-    issues += check_cross_table(tables, relationships)
+    issues += check_cross_table(tables, relationships, rules=rules)
 
     for idx, issue in enumerate(issues, start=1):
         issue["id"] = idx
@@ -93,6 +95,7 @@ def run_rules(directory, source_client=None, reference_date: datetime | None = N
         "source_client": source_client,
         "profiles": profiles,
         "relationships": relationships,
+        "rules": rules,
         "issues": issues,
     }
 

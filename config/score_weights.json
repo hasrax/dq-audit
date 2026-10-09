@@ -1,0 +1,9 @@
+{
+  "_comment": "Dimension weights for the severity-weighted DQ score: DQS = 100 * sum(w_d * s_d). Should sum to 1.0. Edit to tune the scoring and justify the choice in the dissertation; a dimension omitted here keeps its coded default.",
+  "consistency": 0.25,
+  "cross_table": 0.25,
+  "validity": 0.20,
+  "completeness": 0.15,
+  "uniqueness": 0.10,
+  "timeliness": 0.05
+}

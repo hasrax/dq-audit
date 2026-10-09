@@ -34,20 +34,30 @@ Respond with STRICT JSON only, no markdown, no prose, in exactly this shape:
 """
 
 
+# Cap the sample rows sent to the model, keeping the prompt within the design's
+# ~6K-token budget (and within tight free-tier per-minute limits).
+MAX_PROMPT_SAMPLE_ROWS = 10
+
+
 def build_user_payload(profile: dict, sample: dict, relationships: list[dict]) -> str:
     table = profile["table_name"]
-    columns = {
-        col: {
+    columns = {}
+    for col, s in profile["columns"].items():
+        if s["null_pct"] >= 100:
+            continue  # fully-null columns carry no signal — omit to save tokens
+        entry = {
             "type": s["type"],
             "null_pct": s["null_pct"],
             "distinct": s["distinct_count"],
             "min": s["min"],
             "max": s["max"],
             "mean": s["mean"],
-            "top_values": dict(list(s["top_values"].items())[:3]),
         }
-        for col, s in profile["columns"].items()
-    }
+        # top_values only help for low-cardinality columns; for high-cardinality
+        # ones they are just unique values that bloat the prompt.
+        if s["distinct_count"] <= 10:
+            entry["top_values"] = dict(list(s["top_values"].items())[:3])
+        columns[col] = entry
     related = [
         {
             "child_column": r["child_column"],
@@ -65,7 +75,7 @@ def build_user_payload(profile: dict, sample: dict, relationships: list[dict]) -
         "relationships": related,
         "sample_rows": [
             {"row_index": row["row_index"], "values": row["values"]}
-            for row in sample["sampled_rows"]
+            for row in sample["sampled_rows"][:MAX_PROMPT_SAMPLE_ROWS]
         ],
     }
     return json.dumps(payload, ensure_ascii=False, default=str)

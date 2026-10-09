@@ -9,29 +9,17 @@ uniformly.
 """
 from __future__ import annotations
 
-import json
-import re
-
 from app.llm.client import LLMClient
 from app.llm.prompt import SYSTEM_PROMPT, build_user_payload
+from app.llm.structured import complete_json
+from app.llm.structured import extract_json as _extract_json  # noqa: F401 -- re-exported for tests
 
-_FENCE_RE = re.compile(r"^```(?:json)?|```$", re.MULTILINE)
 _SEVERITY_MAP = {
     "critical": "high", "high": "high", "major": "high",
     "medium": "medium", "moderate": "medium",
     "low": "low", "minor": "low", "info": "low",
 }
 _ALLOWED_DIMENSIONS = {"completeness", "validity", "consistency", "uniqueness", "timeliness", "cross_table", "accuracy"}
-_RETRY_NUDGE = "\n\nYour previous reply was not valid JSON. Reply with ONLY the JSON object, no other text."
-
-
-def _extract_json(raw: str) -> dict:
-    """Strip markdown fences / surrounding prose and parse the JSON object."""
-    text = _FENCE_RE.sub("", raw).strip()
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        text = text[start : end + 1]
-    return json.loads(text)
 
 
 def _normalize_issue(raw_issue: dict, table_name: str) -> dict:
@@ -63,25 +51,26 @@ def audit_table(
     sample: dict,
     relationships: list[dict],
     client: LLMClient | None = None,
+    schema_context: str = "",
+    org_context: str = "",
 ) -> list[dict]:
     """Run the LLM auditor on one table's profile + pseudonymized sample.
+
+    schema_context is the human-verified schema documentation for this
+    table (see app.schema_docs.store.get_schema_context); it is prepended
+    to the payload so the model reads columns by their verified meaning.
+    org_context carries the organisation's notes and past accept/reject
+    decisions (see app.llm.feedback). Both empty -> the prompt is exactly
+    as before either feature existed.
 
     Retries once if the model's first reply isn't parseable JSON, then
     gives up and returns [] rather than raising -- a single unparseable
     table must not abort a whole-database audit.
     """
     client = client or LLMClient()
-    user = build_user_payload(profile, sample, relationships)
+    user = "\n\n".join([c for c in (schema_context, org_context) if c]
+                       + [build_user_payload(profile, sample, relationships)])
 
-    raw = client.complete(SYSTEM_PROMPT, user)
-    try:
-        parsed = _extract_json(raw)
-    except (json.JSONDecodeError, ValueError):
-        raw = client.complete(SYSTEM_PROMPT, user + _RETRY_NUDGE)
-        try:
-            parsed = _extract_json(raw)
-        except (json.JSONDecodeError, ValueError):
-            return []
-
-    issues = parsed.get("issues", []) if isinstance(parsed, dict) else []
+    parsed = complete_json(client, SYSTEM_PROMPT, user)
+    issues = parsed.get("issues", []) if parsed else []
     return [_normalize_issue(i, profile["table_name"]) for i in issues if isinstance(i, dict)]

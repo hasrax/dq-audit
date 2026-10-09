@@ -1,0 +1,4 @@
+{
+  "_comment": "Per-client cloud-privacy overrides, applied automatically before any LLM call. 'mask' wins over the heuristic and over 'keep'. List columns the heuristic cannot see as PII: phone numbers stored as integers, national IDs, geo-coordinates.",
+  "CustomerMaster": {"mask": ["col_4", "col_16", "col_21"]}
+}

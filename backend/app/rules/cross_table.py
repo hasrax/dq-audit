@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from app.rules.registry import record_rule
+
 RULE_ID = "cross_table_fk_orphan"
 MAX_SAMPLE_ROWS = 5
 
@@ -34,7 +36,11 @@ def _severity(orphan_pct: float) -> str:
     return "low"
 
 
-def check_cross_table(tables: dict[str, pd.DataFrame], relationships: list[dict]) -> list[dict]:
+def check_cross_table(
+    tables: dict[str, pd.DataFrame],
+    relationships: list[dict],
+    rules: list[dict] | None = None,
+) -> list[dict]:
     issues = []
 
     for rel in relationships:
@@ -46,6 +52,14 @@ def check_cross_table(tables: dict[str, pd.DataFrame], relationships: list[dict]
         child_series = child_df[child_col]
         orphan_mask = child_series.notna() & ~child_series.isin(parent_values)
         orphan_count = int(orphan_mask.sum())
+        key = record_rule(
+            rules, RULE_ID, "cross_table", rel["child_table"], child_col,
+            parameters={"parent_table": rel["parent_table"], "parent_column": parent_col},
+            evidence={"overlap_pct": rel["overlap_pct"], "orphan_count": orphan_count,
+                      "row_count": len(child_df)},
+            violation_count=orphan_count,
+            key_detail=f"{rel['parent_table']}.{parent_col}",
+        )
         if orphan_count == 0:
             continue
 
@@ -76,6 +90,7 @@ def check_cross_table(tables: dict[str, pd.DataFrame], relationships: list[dict]
                 "status": "flagged",
                 "row_reference": {"count": orphan_count, "sample_rows": sample_rows},
                 "rule_id": RULE_ID,
+                "rule_key": key,
             }
         )
     return issues

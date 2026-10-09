@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from app.rules.registry import record_rule
+
 SEVERITY_ORDER = ["low", "medium", "high"]
 RULE_ID = "completeness_null_pct"
 MAX_SAMPLE_ROWS = 5
@@ -34,13 +36,22 @@ def check_completeness(
     profile: dict,
     fk_columns: set[str] | None = None,
     threshold_pct: float = 5.0,
+    rules: list[dict] | None = None,
 ) -> list[dict]:
     fk_columns = fk_columns or set()
     issues = []
 
     for col, col_stats in profile["columns"].items():
         null_pct = col_stats["null_pct"]
-        if null_pct <= threshold_pct:
+        fires = null_pct > threshold_pct
+        key = record_rule(
+            rules, RULE_ID, "completeness", table_name, col,
+            parameters={"max_null_pct": threshold_pct, "fk_role": col in fk_columns},
+            evidence={"null_pct": null_pct, "null_count": col_stats["null_count"],
+                      "row_count": profile["row_count"]},
+            violation_count=col_stats["null_count"] if fires else 0,
+        )
+        if not fires:
             continue
 
         severity = _base_severity(null_pct)
@@ -68,6 +79,7 @@ def check_completeness(
                     "sample_rows": sample_rows,
                 },
                 "rule_id": RULE_ID,
+                "rule_key": key,
             }
         )
     return issues

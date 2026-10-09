@@ -6,7 +6,7 @@ So matching is at (table, column, dimension) granularity, which is the
 honest level for a column-aggregated detector: if the corrupted column
 was flagged for the right dimension, the detector caught that problem.
 Row-level matching would under-credit detectors that legitimately report
-per-column. (Documented as an evaluation design choice for Chapter 4.)
+per-column. (Documented as an evaluation design choice for Chapter 5.)
 """
 from __future__ import annotations
 

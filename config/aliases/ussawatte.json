@@ -1,0 +1,35 @@
+{
+  "_comment": "BEST-EFFORT, INFERRED aliases for the headerless Ussawatte (SeefaUswattaSFABiscut) export, based on Layer 0 profiling of value patterns. VERIFY and correct against the real SeefaERP schema before citing in the dissertation; unmapped columns fall back to col_N.",
+  "CustomerMaster": {
+    "col_1": "Customer ID",
+    "col_2": "Shop Name",
+    "col_3": "Address",
+    "col_4": "Phone",
+    "col_7": "Created Date",
+    "col_8": "Contact Person",
+    "col_16": "NIC",
+    "col_17": "Photo Path",
+    "col_21": "GPS Location",
+    "col_23": "Remark",
+    "col_29": "Verification Status"
+  },
+  "Dis_InvoiceHeader": {
+    "col_3": "Customer ID",
+    "col_4": "Invoice Date",
+    "col_5": "Invoice Time",
+    "col_7": "Total Amount"
+  },
+  "Dis_InvoiceDetails": {
+    "col_4": "Item Code",
+    "col_7": "Quantity",
+    "col_12": "Unit Price",
+    "col_13": "Line Total"
+  },
+  "WhyNotBilling": {
+    "col_2": "Customer ID",
+    "col_3": "Reason Code",
+    "col_4": "Reason",
+    "col_6": "Date",
+    "col_7": "GPS Location"
+  }
+}

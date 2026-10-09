@@ -47,3 +47,25 @@ def test_score_csv_lists_all_dimensions():
     assert rows[0] == ["metric", "value"]
     assert ["overall_score", "30.4"] in rows
     assert len(rows) == 8  # header + 7 metrics
+
+
+def test_xlsx_has_frozen_filtered_issue_sheet_and_summary():
+    from openpyxl import load_workbook
+
+    from app.export import issues_to_xlsx
+
+    data = issues_to_xlsx([_issue(), _issue(severity="low", dimension="validity")],
+                          organisation="Company A", filters={"status": "flagged", "source": "(all)"})
+    wb = load_workbook(io.BytesIO(data))
+    ws = wb["Issues"]
+    assert ws.freeze_panes == "A2" and ws.auto_filter.ref.startswith("A1:")
+    assert ws["A2"].value == "Company A" and ws.max_row == 3
+    summary = [[c.value for c in row] for row in wb["Summary"].iter_rows()]
+    assert ["Total", 1, 0, 1, 2] in summary
+    assert any(r[0] == "Filters: status = flagged" for r in summary)
+
+
+def test_csv_uses_organisation_label_and_trend():
+    text = issues_to_csv([_issue(trend_status="worsening", affected_row_count=40)], organisation="Company B")
+    row = next(csv.DictReader(io.StringIO(text)))
+    assert row["organisation"] == "Company B" and row["trend_status"] == "worsening" and row["affected_rows"] == "40"

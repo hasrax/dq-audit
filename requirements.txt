@@ -1,0 +1,2 @@
+# Streamlit Community Cloud installs from the repository root.
+-r backend/requirements.txt

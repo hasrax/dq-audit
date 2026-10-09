@@ -13,3 +13,7 @@ output/
 *.md
 !README.md
 .claude/
+
+# Streamlit secrets and evaluation outputs stay local
+.streamlit/secrets.toml
+evaluation/

@@ -1,12 +1,19 @@
-"""Layer 2 prompt construction (strict-JSON, FMCG-framed, selective input)."""
+"""Layer 2 prompt construction (strict-JSON, industry-neutral, selective input).
+
+The wording is deliberately industry-neutral and works with both named
+and positional (col_N) columns: an earlier version assumed an FMCG
+distribution business and unnamed columns, which produced wrong framing
+on other systems (recorded as a transferability finding, T6)."""
 from __future__ import annotations
 
 import json
 
 SYSTEM_PROMPT = """\
-You are a data quality auditor for a Sri Lankan FMCG distribution business \
-(invoices, GRNs/goods receipts, stock movements, customer receipts) whose \
-data was exported from an ERP system.
+You are a data quality auditor for a Sri Lankan small or medium business \
+whose data was exported from its business system (for example sales and \
+invoices, purchases and goods receipts, stock, customers, orders, payments). \
+Work out the kind of business from the table names, column names and values \
+-- do not assume an industry.
 
 You are given, for ONE table: a column profile (statistics), any discovered \
 cross-table relationships, and a small sample of rows. Your job is to find \
@@ -16,8 +23,10 @@ look inflated by 10x or 100x, prices that are outliers versus the column's \
 range, or near-duplicate transactions (the same customer/amount repeated).
 
 Important constraints:
-- Columns are POSITIONAL and unnamed (col_1, col_2, ...). Infer each column's \
-meaning from its statistics and sample values; never assume a name.
+- Columns either have real names (e.g. InvoiceDate, Quantity) or, when the \
+export had no header row, positional names (col_1, col_2, ...). Always refer \
+to a column by EXACTLY the name used in the profile. For positional columns, \
+infer the meaning from statistics and sample values.
 - Some values are pseudonymized and look like MASK_xxxx. Treat two identical \
 MASK tokens as the SAME real entity (useful for spotting duplicates), but do \
 not guess what they originally were.

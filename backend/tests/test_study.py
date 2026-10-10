@@ -39,10 +39,16 @@ def _source_audit(conn):
     rule = {"rule_key": "k1", "template": "completeness_null_pct", "category": "completeness", "table_name": "T",
             "column_name": "c", "parameters": {"max_null_pct": 5, "fk_role": False},
             "evidence": {"null_pct": 50, "null_count": 50, "row_count": 100}, "violation_count": 50}
-    rule_ids = repository.save_rules(conn, uid, CLIENT, [rule])
+    ordering = {"rule_key": "k2", "template": "consistency_ordering_violation", "category": "consistency",
+                "table_name": "T", "column_name": "a,b", "parameters": {},
+                "evidence": {"conformance_pct": 97.0, "valid_pairs": 100}, "violation_count": 3}
+    rule_ids = repository.save_rules(conn, uid, CLIENT, [rule, ordering])
     repository.save_issues(conn, uid, [
         {"table_name": "T", "column_name": "c", "dimension": "completeness", "source": "rule", "error_type": "type1",
          "severity": "high", "description": "c is half empty", "rule_id": "completeness_null_pct", "rule_key": "k1"},
+        {"table_name": "T", "column_name": "a,b", "dimension": "consistency", "source": "rule", "error_type": "type1",
+         "severity": "high", "description": "a is usually <= b", "rule_id": "consistency_ordering_violation",
+         "rule_key": "k2"},
         {"table_name": "T", "column_name": "d", "dimension": "validity", "source": "llm", "error_type": "type2",
          "severity": "low", "description": "odd value"},
     ], rule_ids=rule_ids)
@@ -56,6 +62,9 @@ def test_study_copy_is_fresh_linked_and_excluded(conn):
     dst = build_study_workspace(conn, src, name="pytest study", slug=STUDY, replace_others=False)
     copied = repository.fetch_issues(conn, dst)
     assert len(copied) == 2 and all(i["status"] == "flagged" and i["user_note"] is None for i in copied)
+    assert not any(i["rule_id"] == "consistency_ordering_violation" for i in copied)   # study curation
+    assert conn.execute("SELECT count(*) FROM rules WHERE upload_id = %s", (dst,)).fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM dq_scores WHERE upload_id = %s", (dst,)).fetchone()[0] == 1
     rule_issue = next(i for i in copied if i["source"] == "rule")
     assert repository.fetch_rule(conn, rule_issue["rule_ref"])["upload_id"] == dst     # linked to the copied rule
     assert conn.execute("SELECT kind, config_from FROM workspaces WHERE slug = %s", (STUDY,)).fetchone() == \

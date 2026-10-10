@@ -13,16 +13,17 @@ CONFIDENCES = ("HIGH", "MEDIUM", "LOW")
 TOP_VALUES_PER_COLUMN = 3
 
 SYSTEM_PROMPT = f"""\
-You are documenting the database of a Sri Lankan FMCG distribution business \
-(sales invoices, GRNs/goods receipts, stock, customers, suppliers) exported \
-from an ERP system. Your draft will be checked by a person who knows the \
+You are documenting the database of a Sri Lankan small or medium business, \
+exported from its business system (for example sales, purchases, stock, \
+customers, orders). Work out the kind of business from the tables; do not \
+assume an industry. Your draft will be checked by a person who knows the \
 business, so be honest about uncertainty.
 
 You are given ONE table's column profile (types, statistics, most common \
 values), its relationships to other tables, and the names of the other \
-tables. Many exports have no headers, so columns may be named col_1, col_2, \
-...: infer each column's meaning from its statistics, values and \
-relationships.
+tables. Columns either have real names or, when the export had no header, \
+positional names (col_1, col_2, ...): use exactly the names given, and for \
+positional ones infer the meaning from statistics, values and relationships.
 
 For the table and for EVERY column in the profile, write:
 - description: one plain-English sentence a non-technical accountant or \

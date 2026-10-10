@@ -30,17 +30,29 @@ from app.rules.arithmetic import check_arithmetic
 from app.rules.completeness import check_completeness
 from app.rules.cross_table import check_cross_table
 from app.rules.ordering import check_ordering
+from app.rules.rowsets import collecting
 from app.rules.timeliness import check_timeliness
 from app.rules.uniqueness import check_uniqueness
 from app.rules.validity import check_validity
 
 
-def run_rules(directory, source_client=None, reference_date: datetime | None = None) -> dict:
+def run_rules(directory, source_client=None, reference_date: datetime | None = None,
+              collect_rows: bool = False) -> dict:
     """Profile every file in a client directory and run all Layer 1 rules.
 
     Returns a dict with the discovered relationships and the full issue
     list (each issue tagged with a sequential id and the source client).
+    collect_rows=True (evaluation only) also returns the loaded tables and
+    gives each row-level issue every affected row in "_rows".
     """
+    with collecting(collect_rows):
+        result = _run_rules(directory, source_client, reference_date)
+    if not collect_rows:
+        result.pop("tables")
+    return result
+
+
+def _run_rules(directory, source_client, reference_date) -> dict:
     source_client = source_client or str(directory).replace("\\", "/").rstrip("/").split("/")[-1]
 
     tables: dict[str, pd.DataFrame] = {}
@@ -97,6 +109,7 @@ def run_rules(directory, source_client=None, reference_date: datetime | None = N
         "relationships": relationships,
         "rules": rules,
         "issues": issues,
+        "tables": tables,
     }
 
 

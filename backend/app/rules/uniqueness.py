@@ -13,6 +13,7 @@ from __future__ import annotations
 import pandas as pd
 
 from app.rules.registry import record_rule
+from app.rules.rowsets import rows
 
 FULL_ROW_RULE_ID = "uniqueness_full_row_duplicate"
 NEAR_KEY_RULE_ID = "uniqueness_near_key_duplicate"
@@ -51,6 +52,7 @@ def check_uniqueness(
                 "recommendation": "Remove the extra copies, or check why they were entered twice (for example the same data imported twice).",
                 "fixable": "no",
                 "status": "flagged",
+                **rows(df.index[dup_mask]),
                 "row_reference": {"count": dup_count, "sample_rows": sample_rows},
                 "rule_id": FULL_ROW_RULE_ID,
                 "rule_key": full_key,
@@ -97,6 +99,7 @@ def check_uniqueness(
                 "recommendation": "Check whether these are the same record entered twice, or a value that was reused for a different record.",
                 "fixable": "no",
                 "status": "flagged",
+                **rows(df.index[df[col].isin(dup_values.index)]),
                 "row_reference": {"count": dup_row_count, "sample_rows": sample_rows},
                 "rule_id": NEAR_KEY_RULE_ID,
                 "rule_key": key,

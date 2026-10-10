@@ -21,11 +21,11 @@ PALETTES = {
     "dark": dict(BG="#16181D", SURFACE="#1F2229", SURFACE_2="#272B34", BORDER="#343A46",
                  TEXT="#EEF0F4", MUTED="#B4BBC8", FAINT="#8790A0",
                  SAGE="#8FC9B4", MUSTARD="#F1C76E", CORAL="#F39A85", LAVENDER="#B7ABF4", BLUE="#86AEF7",
-                 ON_ACCENT="#0B1210", GLOW=0.08),
+                 ON_ACCENT="#0B1210", GLOW=0.08, BRAND_A="#8FC9B4", BRAND_B="#B7ABF4"),
     "light": dict(BG="#F7F6F2", SURFACE="#FFFFFF", SURFACE_2="#F1EFE9", BORDER="#E3E0D7",
                   TEXT="#1E2127", MUTED="#5B6270", FAINT="#8A909C",
                   SAGE="#2E7D63", MUSTARD="#94650A", CORAL="#C2412D", LAVENDER="#6A55C9", BLUE="#2F64C8",
-                  ON_ACCENT="#FFFFFF", GLOW=0.10),
+                  ON_ACCENT="#FFFFFF", GLOW=0.10, BRAND_A="#2E8B6E", BRAND_B="#5A55D2"),
 }
 MODE = "dark"
 SEVERITY: dict = {}
@@ -40,13 +40,14 @@ def apply(mode: str | None) -> str:
     Lookup dicts are updated in place so modules holding a reference to
     them see the change."""
     global MODE, BG, SURFACE, SURFACE_2, BORDER, TEXT, MUTED, FAINT
-    global SAGE, MUSTARD, CORAL, LAVENDER, BLUE, ON_ACCENT, GLOW
+    global SAGE, MUSTARD, CORAL, LAVENDER, BLUE, ON_ACCENT, GLOW, BRAND_A, BRAND_B
     MODE = mode if mode in PALETTES else "dark"
     p = PALETTES[MODE]
     BG, SURFACE, SURFACE_2, BORDER = p["BG"], p["SURFACE"], p["SURFACE_2"], p["BORDER"]
     TEXT, MUTED, FAINT = p["TEXT"], p["MUTED"], p["FAINT"]
     SAGE, MUSTARD, CORAL, LAVENDER, BLUE = p["SAGE"], p["MUSTARD"], p["CORAL"], p["LAVENDER"], p["BLUE"]
     ON_ACCENT, GLOW = p["ON_ACCENT"], p["GLOW"]
+    BRAND_A, BRAND_B = p["BRAND_A"], p["BRAND_B"]
     SEVERITY.clear()
     SEVERITY.update({"high": CORAL, "medium": MUSTARD, "low": MUTED})
     SOURCE.clear()
@@ -224,11 +225,68 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 .meter-track {{ height:10px; border-radius:999px; background: var(--surface-2); overflow:hidden; }}
 .meter-fill {{ height:100%; border-radius:999px; }}
 
-.brand {{ display:flex; align-items:center; gap:10px; padding: 4px 0 6px 0; }}
-.brand .logo {{ width:30px; height:30px; border-radius:9px;
-  background: linear-gradient(135deg, {SAGE}, {LAVENDER}); box-shadow: 0 0 18px {_rgba(SAGE, .35)}; }}
-.brand .name {{ font-size: 1.25rem; font-weight: 750; color: var(--text); letter-spacing: .2px; }}
-.brand .tag {{ font-size: .74rem; color: var(--muted); margin-top: -2px; }}
+/* sign-in and study-code pages: one centred column */
+.st-key-auth_wrap {{ max-width: 430px; margin: 4vh auto 0 auto; }}
+.auth-brand {{ text-align: center; margin-bottom: 14px; }}
+.auth-brand .mark {{ width: 64px; height: 64px; margin: 0 auto 14px auto;
+  filter: drop-shadow(0 10px 24px {_rgba(LAVENDER, .35)}); }}
+.auth-brand .mark svg {{ width: 64px; height: 64px; display: block; }}
+.auth-brand .name {{ font-size: 2.1rem; font-weight: 750; letter-spacing: -.6px; color: var(--text); line-height: 1.1; }}
+.auth-brand .name span {{ background: linear-gradient(135deg, {BRAND_A}, {BRAND_B});
+  -webkit-background-clip: text; background-clip: text; color: transparent; }}
+.auth-brand .tag {{ font-size: .95rem; color: var(--muted); margin-top: 6px; }}
+.st-key-auth_card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
+  padding: 26px 26px 22px 26px; box-shadow: 0 18px 50px {_rgba(TEXT, .07)}; }}
+.st-key-auth_card [data-testid="stForm"] {{ border: none; padding: 0; }}
+.auth-title {{ font-size: 1.35rem; font-weight: 700; color: var(--text); }}
+.auth-sub {{ font-size: .93rem; color: var(--muted); margin-top: 2px; }}
+.auth-badge {{ display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .6px;
+  text-transform: uppercase; color: {LAVENDER}; background: {_rgba(LAVENDER, .14)};
+  border-radius: 999px; padding: 3px 10px; margin-bottom: 8px; }}
+.st-key-auth_switch {{ align-items: center; gap: 0 !important; }}
+.st-key-auth_switch [data-testid="stElementContainer"] {{ width: auto !important; }}
+.st-key-auth_switch p {{ color: var(--muted); font-size: .92rem; margin: 0; text-align: center; }}
+.st-key-auth_switch button p {{ color: {SAGE}; font-weight: 650; }}
+/* study pages on phones: the three pages as buttons on top */
+.st-key-row_topnav [data-testid="stLayoutWrapper"], .st-key-row_topnav [class*="st-key-topnav_"],
+.st-key-row_topnav [data-testid="stElementContainer"], .st-key-row_topnav [data-testid="stPageLink"],
+.st-key-row_topnav [data-testid="stPageLink"] a {{ width: 100% !important; }}
+.st-key-row_topnav [data-testid="stPageLink"] a {{ justify-content: center; border: 1px solid var(--border);
+  border-radius: 12px; background: var(--surface); padding: 6px 4px; }}
+.st-key-topnav_on [data-testid="stPageLink"] a {{ background: {_rgba(SAGE, .14)}; border-color: {_rgba(SAGE, .5)}; }}
+/* the study task card */
+.st-key-study_panel .sidebar-section {{ font-size: .72rem; font-weight: 700; letter-spacing: .6px;
+  text-transform: uppercase; color: var(--faint); margin: 0 0 2px 0; }}
+
+/* small screens (phones) */
+@media (max-width: 640px) {{
+  [data-testid="stMainBlockContainer"] {{ padding-top: 3.6rem; }}   /* below the fixed logo bar */
+  .st-key-study_panel {{ gap: .55rem !important; }}
+  .st-key-study_panel p {{ font-size: .95rem; line-height: 1.45; }}
+  .st-key-auth_wrap {{ margin-top: 0; }}
+  .st-key-auth_card {{ padding: 20px 18px 16px 18px; }}
+  .page-title {{ font-size: 1.5rem; }}
+  /* containers whose key starts with "row_" keep their columns side by side */
+  [class*="st-key-row_"] [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap !important; gap: .5rem; }}
+  [class*="st-key-row_"] [data-testid="stColumn"] {{ min-width: 0 !important; flex: 1 1 0 !important;
+    width: auto !important; }}
+  /* triage rows: text on top, the three actions in one line underneath */
+  [class*="st-key-irow_"] [data-testid="stHorizontalBlock"],
+  [class*="st-key-wrap_"] [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap !important; gap: .4rem; }}
+  [class*="st-key-irow_"] [data-testid="stColumn"],
+  [class*="st-key-wrap_"] [data-testid="stColumn"] {{ min-width: 0 !important; flex: 1 1 0 !important;
+    width: auto !important; }}
+  [class*="st-key-irow_"] [data-testid="stColumn"]:first-child,
+  [class*="st-key-wrap_"] [data-testid="stColumn"]:first-child {{ flex: 1 1 100% !important; }}
+  .issue-row .sum {{ white-space: normal; }}
+  [class*="st-key-irow_"] .issue-row {{ margin-bottom: 22px; }}   /* clear of the actions below */
+  /* chat: no tall thread list above the conversation */
+  .st-key-chat_threads,
+  [data-testid="stLayoutWrapper"]:has(> .st-key-chat_threads) {{ height: auto !important; max-height: 132px;
+    min-height: 0; }}
+  .st-key-chat_scroll {{ height: 62vh !important; min-height: 300px; }}
+  .st-key-fab {{ right: 16px; bottom: 16px; }}
+}}
 
 /* floating "+ Import" action */
 .st-key-fab {{ position: fixed; right: 34px; bottom: 30px; z-index: 1000; width: auto; }}
@@ -238,6 +296,7 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 .st-key-fab button:hover {{ filter: brightness(1.08); color: {ON_ACCENT}; }}
 
 /* primary buttons: text colour that reads on the sage primary in both modes */
-button[data-testid="stBaseButton-primary"]:not(:disabled) {{ color: {ON_ACCENT} !important; font-weight: 650; }}
+button[data-testid^="stBaseButton-primary"]:not(:disabled),
+button[data-testid^="stBaseButton-primary"]:not(:disabled) p {{ color: {ON_ACCENT} !important; font-weight: 650; }}
 </style>
 """

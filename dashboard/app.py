@@ -1110,6 +1110,7 @@ def _render_chat(conn, upload: dict) -> None:
                 reply = assistant.answer(conn, upload, question, [dict(m) for m in history], focus)
             except Exception as exc:  # noqa: BLE001 -- show the problem instead of crashing the page
                 reply = f"Sorry — the assistant is unavailable right now ({exc.__class__.__name__}). Please try again."
+                _study_log("chat_failed", {"error": exc.__class__.__name__})
         chat_threads.add_message(conn, active, uid, "assistant", reply, username)
         st.rerun()
 

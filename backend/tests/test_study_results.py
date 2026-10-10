@@ -45,8 +45,11 @@ def test_integrity_flags(tmp_path):
         {"code": "P01", "timestamp": "2026-10-10 14:06:00"},      # duplicate
         {"code": "P77", "timestamp": "2026-10-10 14:07:00"},      # never issued
     ])
-    checks = sr.integrity(people, sus, utc_offset_h=5.5)
+    checks = sr.integrity(people, sus, utc_offset_h=5.5, chat_failed={"P04": 2})
     found = set(zip(checks["check"], checks["code"]))
+    assert ("AI chat failed during session", "P04") in found
+    no_form = sr.integrity(people, pd.DataFrame(), utc_offset_h=5.5, chat_failed={"P01": 1})
+    assert list(no_form["check"]) == ["AI chat failed during session"]   # reported even before the form
     assert ("duplicate code in form", "P01") in found
     assert ("form code never issued", "P77") in found
     assert ("finished session without a form response", "P04") in found

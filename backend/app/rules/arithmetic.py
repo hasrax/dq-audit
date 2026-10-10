@@ -149,13 +149,13 @@ def check_arithmetic(
                 "error_type": "type1",
                 "severity": "high",
                 "description": (
-                    f"{rel['product_c']} usually equals {rel['factor_a']} x {rel['factor_b']} "
-                    f"({rel['conformance'] * 100:.4f}% of {rel['informative_rows']} rows), "
-                    f"but {rel['violation_count']} rows break that identity."
+                    f"{rel['product_c']} is normally {rel['factor_a']} × {rel['factor_b']} "
+                    f"(true in {rel['conformance'] * 100:.2f}% of {rel['informative_rows']:,} rows), "
+                    f"but in {rel['violation_count']:,} rows it is not."
                 ),
                 "recommendation": (
-                    f"Check rows where {rel['product_c']} != {rel['factor_a']} x {rel['factor_b']} "
-                    f"for a mis-entered quantity, price, or total."
+                    f"Check the rows where {rel['product_c']} is not {rel['factor_a']} × {rel['factor_b']} "
+                    f"for a wrong quantity, price or total."
                 ),
                 "fixable": "no",
                 "status": "flagged",

@@ -15,6 +15,7 @@ from __future__ import annotations
 import pandas as pd
 
 from app.rules.registry import record_rule
+from app.rules.describe import share_text
 
 RULE_ID = "validity_negative_value"
 MAX_SAMPLE_ROWS = 5
@@ -66,11 +67,10 @@ def check_validity(table_name: str, df: pd.DataFrame, profile: dict, rules: list
                 "error_type": "type1",
                 "severity": _severity(negative_pct),
                 "description": (
-                    f"{col} has {negative_count} negative values "
-                    f"({negative_pct}% of {profile['row_count']} rows); "
-                    f"min={col_stats['min']}."
+                    f"{col} is below zero in {negative_count:,} of {profile['row_count']:,} rows "
+                    f"({share_text(negative_count, profile['row_count'])}); the lowest value is {col_stats['min']}."
                 ),
-                "recommendation": "Confirm whether negative values are intentional (e.g. a discount or return adjustment) or data-entry errors.",
+                "recommendation": "Check whether these minus values are meant to be there (for example a return or a discount) or are typing mistakes.",
                 "fixable": "no",
                 "status": "flagged",
                 "row_reference": {

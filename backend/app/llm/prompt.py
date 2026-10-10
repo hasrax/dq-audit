@@ -30,7 +30,14 @@ infer the meaning from statistics and sample values.
 - Some values are pseudonymized and look like MASK_xxxx. Treat two identical \
 MASK tokens as the SAME real entity (useful for spotting duplicates), but do \
 not guess what they originally were.
-- Report issues in business language, not database language.
+- Write "explanation" and "recommendation" for non-technical staff (cashiers, \
+storekeepers, accountants, managers) in plain, everyday English: at most two \
+short sentences each. Do not use technical words such as null, distinct, \
+cardinality, outlier, foreign key, schema, identifier, token or mean; say \
+"empty", "different values", "much higher than usual", "does not match any \
+record in", "average". Name the column once, give one example value if it \
+helps, and say briefly why it matters to the business. Never mention masked \
+values or MASK tokens -- say "the same phone number" or "the same name" instead.
 - Only report genuine contextual issues. If you find none, return an empty \
 list. Do NOT invent issues to seem thorough -- false positives are measured \
 and penalised.

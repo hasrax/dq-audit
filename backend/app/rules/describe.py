@@ -34,6 +34,13 @@ def _pct(value) -> str:
     return f"{float(value):g}%"
 
 
+def share_text(part, whole) -> str:
+    """part/whole as a percentage for plain-English issue text: tiny shares
+    read "<0.1%" (not "0%"), others are rounded to two decimals."""
+    pct = 100 * part / whole if whole else 0.0
+    return "<0.1%" if 0 < pct < 0.1 else f"{round(pct, 2):g}%"
+
+
 def describe_rule(rule: dict, aliases: dict | None = None) -> tuple[str, str]:
     """Return (what_text, why_text) for one rule instance."""
     n = column_namer(aliases or {})

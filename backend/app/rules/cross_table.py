@@ -23,6 +23,7 @@ from __future__ import annotations
 import pandas as pd
 
 from app.rules.registry import record_rule
+from app.rules.rowsets import rows
 from app.rules.describe import share_text
 
 RULE_ID = "cross_table_fk_orphan"
@@ -89,6 +90,7 @@ def check_cross_table(
                 "recommendation": "Correct these rows so they point to an existing record, or find out why the matching record is missing.",
                 "fixable": "no",
                 "status": "flagged",
+                **rows(child_df.index[orphan_mask]),
                 "row_reference": {"count": orphan_count, "sample_rows": sample_rows},
                 "rule_id": RULE_ID,
                 "rule_key": key,

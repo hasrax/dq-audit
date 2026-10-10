@@ -27,6 +27,7 @@ from __future__ import annotations
 import pandas as pd
 
 from app.rules.registry import record_rule
+from app.rules.rowsets import carry, rows
 
 RULE_ID = "consistency_ordering_violation"
 MAX_SAMPLE_ROWS = 5
@@ -107,6 +108,7 @@ def mine_orderings(
                         "valid_pairs": n,
                         "violation_count": violation_count,
                         "sample_rows": df.index[violation_mask][:MAX_SAMPLE_ROWS].tolist(),
+                        **rows(df.index[violation_mask]),
                     }
                 )
     return discovered
@@ -149,6 +151,7 @@ def check_ordering(
                 "recommendation": f"Check the rows where {rel['column_lo']} is more than {rel['column_hi']}; the values may be swapped or mistyped.",
                 "fixable": "no",
                 "status": "flagged",
+                **carry(rel),
                 "row_reference": {
                     "count": rel["violation_count"],
                     "sample_rows": rel["sample_rows"],

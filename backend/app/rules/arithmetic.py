@@ -37,6 +37,7 @@ import numpy as np
 import pandas as pd
 
 from app.rules.registry import record_rule
+from app.rules.rowsets import carry, rows
 
 RULE_ID = "consistency_arithmetic_violation"
 MAX_SAMPLE_ROWS = 5
@@ -115,6 +116,7 @@ def mine_arithmetic(
                         "informative_rows": n,
                         "violation_count": violation_count,
                         "sample_rows": df.index[violation_mask][:MAX_SAMPLE_ROWS].tolist(),
+                        **rows(df.index[violation_mask]),
                     }
                 )
     return discovered
@@ -159,6 +161,7 @@ def check_arithmetic(
                 ),
                 "fixable": "no",
                 "status": "flagged",
+                **carry(rel),
                 "row_reference": {
                     "count": rel["violation_count"],
                     "sample_rows": rel["sample_rows"],

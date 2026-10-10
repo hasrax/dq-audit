@@ -15,6 +15,7 @@ from __future__ import annotations
 import pandas as pd
 
 from app.rules.registry import record_rule
+from app.rules.rowsets import rows
 from app.rules.describe import share_text
 
 RULE_ID = "validity_negative_value"
@@ -73,6 +74,7 @@ def check_validity(table_name: str, df: pd.DataFrame, profile: dict, rules: list
                 "recommendation": "Check whether these minus values are meant to be there (for example a return or a discount) or are typing mistakes.",
                 "fixable": "no",
                 "status": "flagged",
+                **rows(df.index[negative_mask]),
                 "row_reference": {
                     "count": negative_count,
                     "sample_rows": sample_rows,

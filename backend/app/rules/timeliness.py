@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from app.rules.registry import record_rule
+from app.rules.rowsets import rows
 
 FUTURE_RULE_ID = "timeliness_future_date"
 STALE_RULE_ID = "timeliness_stale_column"
@@ -65,6 +66,7 @@ def check_timeliness(
                     "recommendation": "Check these dates for typing mistakes, such as a wrong year.",
                     "fixable": "no",
                     "status": "flagged",
+                    **rows(df.index[future_mask]),
                     "row_reference": {"count": count, "sample_rows": sample_rows},
                     "rule_id": FUTURE_RULE_ID,
                     "rule_key": f"{FUTURE_RULE_ID}:{table_name}:{col}",

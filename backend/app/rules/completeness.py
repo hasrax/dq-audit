@@ -11,6 +11,7 @@ from __future__ import annotations
 import pandas as pd
 
 from app.rules.registry import record_rule
+from app.rules.rowsets import rows
 from app.rules.describe import share_text
 
 SEVERITY_ORDER = ["low", "medium", "high"]
@@ -75,6 +76,7 @@ def check_completeness(
                 "recommendation": "Find out why this is left blank. If it matters to the business, make it a required field when data is entered.",
                 "fixable": "no",
                 "status": "flagged",
+                **rows(df.index[df[col].isna()]),
                 "row_reference": {
                     "count": col_stats["null_count"],
                     "sample_rows": sample_rows,

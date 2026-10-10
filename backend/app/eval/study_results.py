@@ -86,14 +86,18 @@ def parse_sus(path: Path) -> tuple[pd.DataFrame, list[str]]:
 
 # --- app data -----------------------------------------------------------------
 
-def load_study(conn: psycopg.Connection) -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_study(conn: psycopg.Connection) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
+    """Participants, task events, and failed AI chat answers per code (pilot excluded)."""
     with conn.cursor(row_factory=dict_row) as cur:
         people = cur.execute("SELECT * FROM study_participants WHERE code <> %s ORDER BY code",
                              (PILOT_CODE,)).fetchall()
         tasks = cur.execute(
             "SELECT t.*, EXTRACT(EPOCH FROM (t.ended_at - t.started_at)) AS seconds FROM study_task_events t "
             "WHERE t.code <> %s ORDER BY t.code, t.task_no", (PILOT_CODE,)).fetchall()
-    return pd.DataFrame(people), pd.DataFrame(tasks)
+    chat_failed = dict(conn.execute(
+        "SELECT code, count(*) FROM study_events WHERE event = 'chat_failed' AND code <> %s GROUP BY code",
+        (PILOT_CODE,)).fetchall())
+    return pd.DataFrame(people), pd.DataFrame(tasks), chat_failed
 
 
 def per_participant(people: pd.DataFrame, tasks: pd.DataFrame) -> pd.DataFrame:
@@ -131,11 +135,14 @@ def per_task(tasks: pd.DataFrame, n_participants: int) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def integrity(people: pd.DataFrame, sus: pd.DataFrame, utc_offset_h: float) -> pd.DataFrame:
+def integrity(people: pd.DataFrame, sus: pd.DataFrame, utc_offset_h: float,
+              chat_failed: dict[str, int] | None = None) -> pd.DataFrame:
     issued = set(people["code"]) if not people.empty else set()
-    checks = []
+    # the AI was down during a session: task 3 (and clarity scores) may reflect that, not the design
+    checks = [{"check": "AI chat failed during session", "code": code, "detail": f"{n} failed answer(s)"}
+              for code, n in sorted((chat_failed or {}).items())]
     if sus.empty:
-        return pd.DataFrame(columns=["check", "code", "detail"])
+        return pd.DataFrame(checks, columns=["check", "code", "detail"])
     for code in sorted(set(sus["code"]) - issued - {PILOT_CODE}):
         checks.append({"check": "form code never issued", "code": code, "detail": ""})
     dup = sus["code"].value_counts()
@@ -216,7 +223,7 @@ def main(argv: list[str] | None = None) -> None:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     with psycopg.connect(url) as conn:
-        people, tasks = load_study(conn)
+        people, tasks, chat_failed = load_study(conn)
 
     n = len(people[people["status"] != "not_started"]) if not people.empty else 0
     print(__doc__.split("Usage")[0].strip())
@@ -227,7 +234,7 @@ def main(argv: list[str] | None = None) -> None:
     sus = parse_sus(Path(args.sus))[0] if args.sus else pd.DataFrame()
     if not sus.empty:
         sus = sus[sus["code"] != PILOT_CODE]
-    integ = integrity(people, sus, args.form_utc_offset)
+    integ = integrity(people, sus, args.form_utc_offset, chat_failed)
 
     md = ["# Usability study results (T13, RQ5)", "",
           f"Participants who started: **{n}** (pilot P00 excluded). Source: {'hosted' if args.cloud else 'local'} "

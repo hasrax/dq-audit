@@ -4,15 +4,21 @@ Users ask about one issue or about their imported data in general. Each
 question is answered ONLY from context assembled here:
   - a compact profile summary of the relevant tables,
   - verified schema documentation,
-  - the selected issue (and its rule's what/why), if any,
+  - the selected issue (and its rule's what/why), if any, with up to 5 of
+    its stored example rows -- masked,
   - a summary of the current audit's issues,
   - the last 6 chat turns (the API is stateless, so history is resent).
 
-Privacy (same principle as Layer 2): only statistics leave the machine.
+Privacy (same principle as Layer 2: profile + small masked samples).
 Text columns never send min/max values (they could be names); columns in
-the client's privacy mask list send no values at all; raw row samples
-are never sent. The model may not write SQL or code to run on the data
--- a function-catalogue approach is future work.
+the client's privacy mask list send no values at all. The only rows sent
+are the selected issue's stored examples (at most 5), with every text or
+privacy-listed value replaced by its MASK_xxxx pseudonym (equal values
+keep equal pseudonyms, so rows can still be compared) and long digit runs
+masked. Added after a usability-study participant asked whether duplicate
+invoices differ in their other columns and the chat could not see them
+(10 Oct 2026). The model may not write SQL or code to run on the data --
+a function-catalogue approach is future work.
 """
 from __future__ import annotations
 
@@ -24,8 +30,9 @@ from psycopg.rows import dict_row
 from app.aliases import base_client, client_label
 from app.db import repository
 from app.llm.client import LLMClient
-from app.privacy.pseudonymize import load_overrides
+from app.privacy.pseudonymize import load_overrides, mask_value
 from app.schema_docs.store import display_aliases, get_schema_context
+from app.db.sync_cloud import scrub
 
 HISTORY_TURNS = 6
 MAX_ISSUES_LISTED = 15
@@ -44,7 +51,11 @@ instead of guessing. Never invent numbers. Do not write SQL or code.
 Write in plain business English, short paragraphs or a few bullet points, \
 no database jargon. Do not use markdown headings; use **bold** labels instead. Column names like col_3 may have a friendly name in \
 brackets; use the friendly name when there is one. Some values appear as \
-MASK_xxxx because they were hidden for privacy; never guess them.
+MASK_xxxx because they were hidden for privacy; never guess them, but \
+two identical MASK values do mean the same original value, so you can say \
+whether rows match. When EXAMPLE ROWS are given for an issue, use them to \
+answer questions about those rows (for example whether duplicates differ in \
+other columns), and say that they are only examples, not every affected row.
 """
 
 
@@ -112,7 +123,41 @@ def _issue_detail(conn: psycopg.Connection, issue: dict, aliases: dict) -> str:
         rule = repository.fetch_rule(conn, issue["rule_ref"])
         if rule:
             lines += [f"Rule — what it checks: {rule['what_text']}", f"Rule — why it exists: {rule['why_text']}"]
+    lines += _example_rows(conn, issue, aliases)
     return "\n".join(lines)
+
+
+MAX_EXAMPLE_ROWS = 5
+
+
+def _example_rows(conn: psycopg.Connection, issue: dict, aliases: dict) -> list[str]:
+    """The issue's stored example rows, masked (see the privacy note above)."""
+    samples = ((issue.get("row_reference") or {}).get("samples") or [])[:MAX_EXAMPLE_ROWS]
+    if not samples:
+        return []
+    table = issue["table_name"]
+    types = dict(conn.execute(
+        "SELECT column_name, data_type FROM profiles WHERE upload_id = %s AND table_name = %s",
+        (issue["upload_id"], table)).fetchall())
+    private = load_overrides(base_client(issue.get("source_client"))).get(table, {}).get("mask", set())
+    names = aliases.get(table, {})
+    out = [f"EXAMPLE ROWS for issue #{issue['id']} ({len(samples)} of "
+           f"{(issue.get('row_reference') or {}).get('count') or len(samples)} affected rows; masked):"]
+    for s in samples:
+        cells = []
+        for col, v in (s.get("values") or {}).items():
+            if v is None:
+                shown = "(empty)"
+            elif str(v).startswith("MASK_"):
+                shown = str(v)
+            elif col in private or types.get(col, "varchar") not in VALUE_TYPES:
+                shown = mask_value(str(v))
+            else:
+                shown = scrub(str(v))
+            label = f"{names[col]} ({col})" if col in names else col
+            cells.append(f"{label} = {shown}")
+        out.append(f"- Row {int(s.get('row', 0)) + 1}: " + "; ".join(cells))
+    return out
 
 
 def build_context(conn: psycopg.Connection, upload: dict, issue: dict | list[dict] | None = None) -> str:

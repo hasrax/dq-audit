@@ -101,8 +101,22 @@ def test_all_companies_mode_renders(page):
 def test_signed_out_users_see_only_the_login_form():
     at = _app(user=None)
     assert not at.exception
-    assert sorted(t.label for t in at.text_input) == ["Password", "Username", "Your code"]   # staff + study code
+    assert sorted(t.label for t in at.text_input) == ["Password", "Username"]
     assert "_pages" not in at.session_state
+    at.button(key="to_study").click().run()          # "Taking part in the usability study?"
+    assert [t.label for t in at.text_input] == ["Your code"]
+    at.button(key="to_staff").click().run()
+    assert sorted(t.label for t in at.text_input) == ["Password", "Username"]
+
+
+def test_study_link_opens_the_code_page_prefilled():
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file(str(APP_PATH), default_timeout=90)
+    at.query_params["study"] = "p03"
+    at.run()
+    assert not at.exception
+    assert [(t.label, t.value) for t in at.text_input] == [("Your code", "P03")]
 
 
 def test_reviewer_gets_no_admin_pages():

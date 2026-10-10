@@ -66,6 +66,7 @@ from app.study.setup import build_study_workspace
 # Temporary working name — change these two lines to rebrand the whole app.
 APP_NAME = "ClarityDQ"
 APP_TAGLINE = "Explainable Data Quality Audit for SME ERP data"
+STATIC = Path(__file__).resolve().parent / "static"   # logo, wordmark, browser-tab icon
 
 ABOUT_MD = f"""
 **{APP_NAME}** is an explainable data quality audit tool for SME ERP
@@ -188,44 +189,85 @@ def _is_admin() -> bool:
     return bool(user and user["role"] == "admin")
 
 
+def _brand_html() -> str:
+    mark = (STATIC / "icon.svg").read_text(encoding="utf-8")
+    name = html.escape(APP_NAME)
+    if name.endswith("DQ"):
+        name = f"{name[:-2]}<span>DQ</span>"
+    return (f'<div class="auth-brand"><div class="mark">{mark}</div><div class="name">{name}</div>'
+            f'<div class="tag">{html.escape(APP_TAGLINE)}</div></div>')
+
+
+def _set_login_mode(mode: str) -> None:
+    st.session_state["login_mode"] = mode
+
+
 def _render_login(conn) -> None:
-    _, staff, gap, study, _ = st.columns([0.35, 1.2, 0.12, 1, 0.35])
-    with study.container(border=True):
-        st.markdown("### Taking part in the study?")
-        st.caption("Enter the code you were given (for example P01).")
-        with st.form("study_login"):
-            code = st.text_input("Your code", max_chars=3, placeholder="P01")
-            go = st.form_submit_button("Start", type="primary", width="stretch")
-        if go:
-            ok, msg = sp.check_code(conn, code)
-            if ok:
-                code = sp.normalise_code(code)
-                st.session_state["user"] = {"id": 0, "username": code, "role": "participant"}
-                st.session_state["username"] = code
-                st.rerun()
-            st.error(msg)
-            if "already been used" in msg and _sus_url(sp.normalise_code(code)):
-                st.markdown(f"If you haven't filled in the questionnaire yet: "
-                            f"[open it here]({_sus_url(sp.normalise_code(code))})")
-    with staff:
-        st.markdown("### Sign in")
-        st.caption("Use the account your administrator created for you.")
-        if auth.count_users(conn) == 0:
-            st.info(
-                "No accounts exist yet. Create the first administrator from a terminal:\n\n"
-                "`cd backend && python -m app.auth.users create admin --role=admin`"
-            )
-        with st.form("login"):
-            username = st.text_input("Username", autocomplete="username")
-            password = st.text_input("Password", type="password", autocomplete="current-password")
-            submitted = st.form_submit_button("Sign in", type="primary", width="stretch")
-        if submitted:
-            user = auth.authenticate(conn, username, password)
-            if user:
-                st.session_state["user"] = user
-                st.session_state["username"] = user["username"]
-                st.rerun()
-            st.error("That username and password don't match. Please try again.")
+    """Staff sign-in, with a link to the study-code page. Participants can be
+    sent straight to the code page: <site>/?study (or ?study=P03 to pre-fill)."""
+    link = st.query_params.get("study")
+    if link is not None and "login_mode" not in st.session_state:
+        st.session_state["login_mode"] = "study"
+    study = st.session_state.get("login_mode") == "study"
+    with st.container(key="auth_wrap"):
+        st.markdown(_brand_html(), unsafe_allow_html=True)
+        with st.container(key="auth_card"):
+            if study:
+                prefill = sp.normalise_code(link or "")
+                _study_login(conn, prefill if sp.CODE_RE.match(prefill) else "")
+            else:
+                _staff_login(conn)
+        with st.container(key="auth_switch"):
+            if study:
+                st.button("← Staff sign in", type="tertiary", key="to_staff",
+                          on_click=_set_login_mode, args=("staff",))
+            else:
+                st.markdown("Taking part in the usability study?")
+                st.button("Enter your study code →", type="tertiary", key="to_study",
+                          on_click=_set_login_mode, args=("study",))
+
+
+def _study_login(conn, prefill: str) -> None:
+    st.markdown('<div class="auth-badge">Usability study</div>'
+                '<div class="auth-title">Welcome — thank you for helping</div>'
+                '<div class="auth-sub">Enter the code you were given (for example P01). It takes about '
+                '10 minutes, on a phone or a computer.</div>', unsafe_allow_html=True)
+    with st.form("study_login", border=False):
+        code = st.text_input("Your code", max_chars=3, placeholder="P01", value=prefill)
+        go = st.form_submit_button("Start", type="primary", width="stretch", icon=":material/play_arrow:")
+    if go:
+        ok, msg = sp.check_code(conn, code)
+        if ok:
+            code = sp.normalise_code(code)
+            st.session_state["user"] = {"id": 0, "username": code, "role": "participant"}
+            st.session_state["username"] = code
+            st.rerun()
+        st.error(msg)
+        if "already been used" in msg and _sus_url(sp.normalise_code(code)):
+            st.markdown(f"If you haven't filled in the questionnaire yet: "
+                        f"[open it here]({_sus_url(sp.normalise_code(code))})")
+
+
+def _staff_login(conn) -> None:
+    st.markdown('<div class="auth-title">Sign in</div>'
+                '<div class="auth-sub">Use the account your administrator created for you.</div>',
+                unsafe_allow_html=True)
+    if auth.count_users(conn) == 0:
+        st.info(
+            "No accounts exist yet. Create the first administrator from a terminal:\n\n"
+            "`cd backend && python -m app.auth.users create admin --role=admin`"
+        )
+    with st.form("login", border=False):
+        username = st.text_input("Username", autocomplete="username")
+        password = st.text_input("Password", type="password", autocomplete="current-password")
+        submitted = st.form_submit_button("Sign in", type="primary", width="stretch")
+    if submitted:
+        user = auth.authenticate(conn, username, password)
+        if user:
+            st.session_state["user"] = user
+            st.session_state["username"] = user["username"]
+            st.rerun()
+        st.error("That username and password don't match. Please try again.")
 
 
 def _render_account_sidebar() -> None:
@@ -241,7 +283,7 @@ def _render_account_sidebar() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title=APP_NAME, page_icon="🔍", layout="wide")
+    st.set_page_config(page_title=APP_NAME, page_icon=str(STATIC / "icon.svg"), layout="wide")
     ui.apply(st.context.theme.type)  # follows the viewer's Light / Dark setting
     st.markdown(ui.css(), unsafe_allow_html=True)
     try:
@@ -252,14 +294,10 @@ def main() -> None:
                  icon=":material/cloud_off:")
         return
 
-    brand = (f'<div class="brand"><div class="logo"></div><div><div class="name">{APP_NAME}</div>'
-             f'<div class="tag">{APP_TAGLINE}</div></div></div>')
     if _current_user() is None:
-        st.markdown(brand, unsafe_allow_html=True)
         _render_login(conn)
         return
-    static = Path(__file__).resolve().parent / "static"
-    st.logo(str(static / f"logo-{ui.MODE}.svg"), size="large", icon_image=str(static / "icon.svg"))
+    st.logo(str(STATIC / f"logo-{ui.MODE}.svg"), size="large", icon_image=str(STATIC / "icon.svg"))
     if _is_participant():
         _participant_main(conn)
         return
@@ -321,8 +359,6 @@ def _participant_main(conn) -> None:
         st.session_state.pop("user", None)
         return
     device, browser = _device()
-    if device != "desktop":
-        st.warning("This study works best on a laptop or computer.", icon=":material/computer:")
     if p["consent_at"] is None:
         _study_consent(conn, code, device, browser)
         return
@@ -335,11 +371,24 @@ def _participant_main(conn) -> None:
     if not uploads:
         st.error("The study isn't ready yet. Please contact the researcher.")
         return
-    _study_task_panel(conn, code, task)
     navigation = _build_navigation(conn, slug, uploads[0], admin=False, participant=True)
-    _render_sidebar_nav(False)
-    _render_account_sidebar()
+    if device == "desktop":
+        _study_task_panel(conn, code, task, st.sidebar)
+        _render_sidebar_nav(False)
+        _render_account_sidebar()
+    else:   # phones / tablets hide the sidebar, so the task and the pages sit on top
+        _study_task_panel(conn, code, task, st)
+        _render_top_nav(navigation.url_path or "overview")
     navigation.run()
+
+
+def _render_top_nav(current: str) -> None:
+    pages = st.session_state["_pages"]
+    with st.container(key="row_topnav"):
+        for col, (key, page) in zip(st.columns(len(pages)), pages.items()):
+            title, icon, _section = PAGE_SPECS[key]
+            with col.container(key="topnav_on" if key == current else f"topnav_{key}"):
+                st.page_link(page, label=title, icon=f":material/{icon}:")
 
 
 def _study_consent(conn, code: str, device: str, browser: str) -> None:
@@ -354,7 +403,7 @@ def _study_consent(conn, code: str, device: str, browser: str) -> None:
             "- Nothing you do here changes any real data. There are no right or wrong answers — we are testing "
             "the system, not you."
         )
-        st.info("This takes about 10 minutes. Please use a laptop or computer.", icon=":material/schedule:")
+        st.info("This takes about 10 minutes, on a phone or a computer.", icon=":material/schedule:")
         agree = st.checkbox("I agree to take part. My answers are anonymous and may be used in a university "
                             f"research project. (Your code: {code})")
         if st.button("Start", type="primary", disabled=not agree, icon=":material/play_arrow:", key="study_start"):
@@ -362,9 +411,9 @@ def _study_consent(conn, code: str, device: str, browser: str) -> None:
             st.rerun()
 
 
-def _study_task_panel(conn, code: str, task: int) -> None:
+def _study_task_panel(conn, code: str, task: int, where=st.sidebar) -> None:
     title, text = sp.TASKS[task]
-    with st.sidebar.container(border=True, key="study_panel"):
+    with where.container(border=True, key="study_panel"):
         st.markdown(f'<div class="sidebar-section">Study · task {task} of {sp.N_TASKS}</div>',
                     unsafe_allow_html=True)
         st.progress((task - 1) / sp.N_TASKS)
@@ -373,10 +422,15 @@ def _study_task_panel(conn, code: str, task: int) -> None:
         answer = None
         if task == 1:
             answer = st.text_area("In one sentence, what is wrong?", key=f"study_answer_{code}", height=90)
-        if st.button("Done", type="primary", width="stretch", key=f"study_done_{task}", icon=":material/check:"):
+        if where is st.sidebar:
+            done_col = cant_col = st
+        else:   # phones: one line of actions
+            done_col, cant_col = st.container(key="row_study_actions").columns(2)
+        if done_col.button("Done", type="primary", width="stretch", key=f"study_done_{task}",
+                           icon=":material/check:"):
             sp.end_task(conn, code, task, "done", answer)
             st.rerun()
-        if st.button("I couldn't do this", width="stretch", key=f"study_cant_{task}"):
+        if cant_col.button("I couldn't do this", width="stretch", key=f"study_cant_{task}"):
             sp.end_task(conn, code, task, "couldnt", answer)
             st.rerun()
 
@@ -548,8 +602,11 @@ def _audit_bar(conn, slug: str) -> dict | None:
         when = f"{(u['data_as_of'] or u['upload_date']):%d %b %Y}"
         return f"Latest · {when}  (#{i})" if i == latest else f"{when}  (#{i})"
 
-    info, pick = st.columns([3, 1.3], vertical_alignment="bottom")
-    uid = pick.selectbox("Audit", list(by_id), key=key, format_func=_label)
+    if _is_participant():   # the study copy has a single audit
+        info, uid = st, st.session_state[key]
+    else:
+        info, pick = st.columns([3, 1.3], vertical_alignment="bottom")
+        uid = pick.selectbox("Audit", list(by_id), key=key, format_func=_label)
     u = by_id[uid]
     reviewed = u["issue_count"] - u["pending_count"]
     info.markdown(
@@ -855,7 +912,12 @@ def _render_triage(conn, upload: dict) -> None:
     issues = repository.fetch_issues(conn, uid)
     if _is_participant():   # a participant sees only their own decisions
         issues = sp.overlay(issues, sp.decisions(conn, _username()), _username())
-    filters = _filter_bar(sorted({i["table_name"] for i in issues}))
+    tables = sorted({i["table_name"] for i in issues})
+    if _device()[0] == "desktop":
+        filters = _filter_bar(tables)
+    else:   # seven stacked drop-downs would fill a phone screen
+        with st.expander("Filter by table, severity, status…", icon=":material/filter_list:"):
+            filters = _filter_bar(tables)
     for key in ("table", "source", "dimension", "severity", "status"):
         field = "table_name" if key == "table" else key
         if filters[key] != ALL:
@@ -867,7 +929,7 @@ def _render_triage(conn, upload: dict) -> None:
     elif filters["trend"] != ALL:
         issues = [i for i in issues if i.get("trend_status") == filters["trend"]]
     aliases = _aliases(conn, upload["source_client"])
-    head_l, head_csv, head_xlsx = st.columns([3, 1, 1])
+    head_l, head_csv, head_xlsx = st.container(key="row_downloads").columns([3, 1, 1])
     head_l.caption(f"Showing {len(issues)} issue(s)")
     if issues:
         org = client_label(upload["source_client"])
@@ -1058,7 +1120,8 @@ def _render_chat(conn, upload: dict) -> None:
         audit_issues = repository.fetch_issues(conn, uid)
         attached = chat_threads.thread_issues(conn, active) if active else []
         options = {i["id"]: i for i in audit_issues} | {i["id"]: i for i in attached}
-        head, report_b, tools = st.columns([4.6, 1, 1], vertical_alignment="bottom")
+        head, report_b, tools = st.container(key="wrap_chathead").columns([4.6, 1, 1],
+                                                                          vertical_alignment="bottom")
         chosen = head.multiselect(
             "Issues in this chat", list(options), default=[i["id"] for i in attached],
             format_func=lambda i: _issue_option_label(options[i], aliases),
@@ -2055,7 +2118,8 @@ def _issue_row(conn, issue: dict, aliases: dict) -> None:
         meta.append(f"{rows:,} row(s) affected")
     if issue.get("fixable") == "yes":
         meta.append("fixable")
-    text, decide_a, decide_r, open_b = st.columns([8.4, 0.75, 0.75, 1.1], vertical_alignment="center")
+    row = st.container(key=f"irow_{issue['id']}")   # phones: actions wrap under the text
+    text, decide_a, decide_r, open_b = row.columns([8.4, 0.75, 0.75, 1.1], vertical_alignment="center")
     text.markdown(
         f'''<div class="issue-row" style="--sev:{sev_color}">
   <div class="top"><span class="loc">{_location_html(issue, aliases)}</span>

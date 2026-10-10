@@ -33,8 +33,9 @@ VALUE_TYPES = ("int", "decimal", "date")
 
 SYSTEM_PROMPT = """\
 You are a friendly data quality assistant helping non-technical staff at a \
-Sri Lankan distribution business (accountants, storekeepers, data-entry \
-operators, managers) understand an audit of their ERP data.
+Sri Lankan small or medium business (accountants, storekeepers, data-entry \
+operators, managers) understand an audit of their business data. Work out \
+the kind of business from the tables and columns; do not assume an industry.
 
 Answer only from the profile, schema documentation, and audit results \
 provided. If a question needs data that is not included, say so clearly \
@@ -159,7 +160,8 @@ def answer(conn: psycopg.Connection, upload: dict, question: str, history: list[
 
 REPORT_PROMPT = """\
 You write data quality reports for non-technical staff and managers at a \
-Sri Lankan distribution business. Write ONLY from the context provided \
+Sri Lankan small or medium business (work out the kind of business from the \
+context; do not assume an industry). Write ONLY from the context provided \
 (profile statistics, schema documentation, audit results, selected issues \
 and the conversation). Never invent numbers; if something the reader asked \
 for is not in the context, say so in one sentence.

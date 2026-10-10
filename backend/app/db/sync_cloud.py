@@ -68,6 +68,9 @@ class Masker:
                 "SELECT upload_id, table_name, column_name, data_type FROM profiles").fetchall()
         }
         self.clients = dict(local.execute("SELECT id, source_client FROM uploads").fetchall())
+        # copies (study / replay) use their parent company's privacy list
+        self.parents = dict(local.execute(
+            "SELECT slug, config_from FROM workspaces WHERE config_from IS NOT NULL").fetchall())
         self._overrides: dict[str, dict] = {}
         # Never hosted: local-only workspaces (Companies D-G) and test (injection) data.
         self.excluded_clients = {r[0] for r in local.execute(
@@ -75,7 +78,8 @@ class Masker:
         self.excluded_uploads = {u for u, c in self.clients.items() if c in self.excluded_clients}
 
     def _override_mask(self, upload_id: int, table: str) -> set[str]:
-        client = base_client(self.clients.get(upload_id))
+        client = self.clients.get(upload_id)
+        client = base_client(self.parents.get(client, client))
         if client not in self._overrides:
             self._overrides[client] = load_overrides(client)
         return self._overrides[client].get(table, {}).get("mask", set())

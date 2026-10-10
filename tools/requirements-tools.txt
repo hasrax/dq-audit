@@ -1,0 +1,2 @@
+# Data-preparation tools only (not needed by the app or the hosted site)
+pyodbc==5.3.0

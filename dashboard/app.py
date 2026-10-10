@@ -27,6 +27,7 @@ sys.path.append(str(Path(__file__).resolve().parent))
 
 import pandas as pd
 import plotly.graph_objects as go
+import psycopg
 from psycopg.rows import dict_row
 import streamlit as st
 
@@ -129,6 +130,18 @@ def get_conn():
     return conn
 
 
+def _db():
+    """The cached connection, reconnected once if the server dropped it
+    (the hosted database suspends after a few idle minutes)."""
+    conn = get_conn()
+    try:
+        conn.execute("SELECT 1")
+        return conn
+    except psycopg.OperationalError:
+        get_conn.clear()
+        return get_conn()
+
+
 def _aliases(conn, source_client: str) -> dict:
     return docs_store.display_aliases(conn, source_client)
 
@@ -162,7 +175,7 @@ def _is_participant() -> bool:
 def _study_log(event: str, detail: dict | None = None) -> None:
     """Record what a study participant did (system verification of tasks)."""
     if _is_participant():
-        sp.log_event(get_conn(), _username(), event, detail)
+        sp.log_event(_db(), _username(), event, detail)
 
 
 def _sus_url(code: str) -> str:
@@ -231,8 +244,13 @@ def main() -> None:
     st.set_page_config(page_title=APP_NAME, page_icon="🔍", layout="wide")
     ui.apply(st.context.theme.type)  # follows the viewer's Light / Dark setting
     st.markdown(ui.css(), unsafe_allow_html=True)
-    conn = get_conn()
-    repository.apply_schema(conn)
+    try:
+        conn = _db()
+        repository.apply_schema(conn)
+    except psycopg.OperationalError:
+        st.error("We can't reach the database right now. Please wait a minute and refresh the page.",
+                 icon=":material/cloud_off:")
+        return
 
     brand = (f'<div class="brand"><div class="logo"></div><div><div class="name">{APP_NAME}</div>'
              f'<div class="tag">{APP_TAGLINE}</div></div></div>')
@@ -394,12 +412,15 @@ def _render_study_admin(conn) -> None:
                         f"participants' decisions are kept separately).")
         else:
             st.warning("No study copy yet.")
-        real = repository.list_uploads(conn, source_client="hemas")
-        if real and st.button(f"Rebuild from Company A's latest audit (#{real[0]['id']})", key="study_rebuild",
-                              help="Replaces the copy — and any participant decisions on it."):
-            build_study_workspace(conn, real[0]["id"])
-            st.toast("Study copy rebuilt", icon=":material/refresh:")
-            st.rerun()
+        real = [c for c in ws.list_workspaces(conn, kinds=("real",)) if c["audit_count"]]
+        if real:
+            src = st.selectbox("Build the study copy from", [c["slug"] for c in real], key="study_src",
+                               format_func=lambda k: f"{client_label(k)} — latest audit")
+            if st.button("Build study copy", key="study_rebuild", icon=":material/content_copy:",
+                         help="Replaces the current study copy — and any participant decisions on it."):
+                build_study_workspace(conn, repository.list_uploads(conn, source_client=src)[0]["id"])
+                st.toast("Study copy rebuilt", icon=":material/refresh:")
+                st.rerun()
     with right.container(border=True):
         st.markdown('<div class="card-title">Questionnaire link</div>', unsafe_allow_html=True)
         url = os.environ.get("SUS_FORM_PREFILL_URL", "")

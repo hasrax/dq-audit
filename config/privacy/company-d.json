@@ -1,0 +1,24 @@
+{
+  "_comment": "Company D (restaurant management system). Always masked before any AI call or hosted copy: names, phone numbers stored as digits, addresses, member card numbers and free-text remarks. SMSDicount is a numeric column that in practice holds phone numbers.",
+  "MembersMaster": {
+    "mask": [
+      "MemName",
+      "MemTel",
+      "Address",
+      "Location",
+      "LoyaltyCode",
+      "Remarks",
+      "SMSDicount"
+    ]
+  },
+  "Employees": {
+    "mask": [
+      "EmpName"
+    ]
+  },
+  "InvoiceCancel": {
+    "mask": [
+      "Remarks"
+    ]
+  }
+}

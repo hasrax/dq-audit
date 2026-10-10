@@ -209,6 +209,10 @@ def _render_login(conn) -> None:
     if link is not None and "login_mode" not in st.session_state:
         st.session_state["login_mode"] = "study"
     study = st.session_state.get("login_mode") == "study"
+    # after signing out the browser keeps the (now empty) sidebar open; hide it here
+    st.markdown('<style>[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], '
+                '[data-testid="stExpandSidebarButton"] { display: none !important; }</style>',
+                unsafe_allow_html=True)
     with st.container(key="auth_wrap"):
         st.markdown(_brand_html(), unsafe_allow_html=True)
         with st.container(key="auth_card"):

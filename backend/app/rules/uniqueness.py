@@ -47,8 +47,8 @@ def check_uniqueness(
                 "source": "rule",
                 "error_type": "type1",
                 "severity": "high",
-                "description": f"{dup_count} rows are exact full-row duplicates of another row.",
-                "recommendation": "Remove or investigate duplicate rows -- likely a repeated import or double entry.",
+                "description": f"{dup_count:,} rows are exact copies of another row.",
+                "recommendation": "Remove the extra copies, or check why they were entered twice (for example the same data imported twice).",
                 "fixable": "no",
                 "status": "flagged",
                 "row_reference": {"count": dup_count, "sample_rows": sample_rows},
@@ -90,11 +90,11 @@ def check_uniqueness(
                 "error_type": "type1",
                 "severity": "high",
                 "description": (
-                    f"{col} looks like a unique identifier ({stats['distinct_count']} distinct "
-                    f"of {non_null_count} non-null values, {ratio * 100:.2f}%) but has "
-                    f"{len(dup_values)} duplicated values covering {dup_row_count} rows."
+                    f"Each {col} should appear only once, but {len(dup_values):,} value(s) are repeated "
+                    f"across {dup_row_count:,} rows ({stats['distinct_count']:,} different values in "
+                    f"{non_null_count:,} filled rows)."
                 ),
-                "recommendation": "Investigate whether these are true duplicate records or a reused/recycled identifier.",
+                "recommendation": "Check whether these are the same record entered twice, or a value that was reused for a different record.",
                 "fixable": "no",
                 "status": "flagged",
                 "row_reference": {"count": dup_row_count, "sample_rows": sample_rows},

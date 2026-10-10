@@ -23,6 +23,7 @@ from __future__ import annotations
 import pandas as pd
 
 from app.rules.registry import record_rule
+from app.rules.describe import share_text
 
 RULE_ID = "cross_table_fk_orphan"
 MAX_SAMPLE_ROWS = 5
@@ -66,8 +67,8 @@ def check_cross_table(
         orphan_pct = round(orphan_count / len(child_df) * 100, 2)
         sample_rows = child_df.index[orphan_mask][:MAX_SAMPLE_ROWS].tolist()
         spurious_note = (
-            " This high an orphan rate may mean the discovered relationship itself "
-            "is spurious rather than a real broken FK -- worth confirming before trusting it."
+            " With this many, the link between the two tables may not be real -- "
+            "check that before fixing anything."
             if orphan_pct > 50
             else ""
         )
@@ -81,11 +82,11 @@ def check_cross_table(
                 "error_type": "type1",
                 "severity": _severity(orphan_pct),
                 "description": (
-                    f"{rel['child_table']}.{child_col} has {orphan_count} values "
-                    f"({orphan_pct}%) not found in {rel['parent_table']}.{parent_col}."
+                    f"{orphan_count:,} rows in {rel['child_table']} ({share_text(orphan_count, len(child_df))}) have a value in "
+                    f"{child_col} that does not match any {parent_col} in {rel['parent_table']}."
                     f"{spurious_note}"
                 ),
-                "recommendation": "Correct the reference or investigate the source of the orphaned rows.",
+                "recommendation": "Correct these rows so they point to an existing record, or find out why the matching record is missing.",
                 "fixable": "no",
                 "status": "flagged",
                 "row_reference": {"count": orphan_count, "sample_rows": sample_rows},

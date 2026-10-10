@@ -20,17 +20,21 @@ PILOT_CODE = "P00"
 CODE_RE = re.compile(r"^P\d{2}$")
 
 TASKS = {
+    # Each task says where to go (revised after the P00 pilot: first-time users
+    # on a phone could not tell where to start).
     1: ("Find the most serious issue",
-        "Open the most serious (high-severity) issue and read its explanation. Then answer below: "
-        "in one sentence, what is wrong?"),
+        "Go to **Triage**. Issues are listed with the most serious (**High**) first. Press **Open** on a "
+        "High issue and read its explanation. Then answer below: in one sentence, what is wrong?"),
     2: ("Decide on it",
-        "Accept or reject that issue and write a short note explaining why."),
+        "Open the same issue again, write a short note saying why, then press **Accept** (it is a real "
+        "problem) or **Reject** (it is not a problem)."),
     3: ("Ask about it",
-        "Ask the chat one question about that issue."),
+        "In that issue's window, press **Discuss in chat** and ask one question about it in your own words."),
     4: ("Export a table's issues",
-        "Filter the issues to one table and download them as Excel."),
+        "On **Triage**, use the **Table** filter to show one table (on a phone, first tap **Filter by "
+        "table, severity, status…**). Then press **Excel** to download those issues."),
     5: ("Get the report",
-        "Download the PDF report."),
+        "Go to **Overview**, press **Reports** and download the **PDF** report."),
 }
 N_TASKS = len(TASKS)
 

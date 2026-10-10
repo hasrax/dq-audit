@@ -142,11 +142,11 @@ def check_ordering(
                 "error_type": "type1",
                 "severity": "high",
                 "description": (
-                    f"{rel['column_lo']} is usually <= {rel['column_hi']} "
-                    f"({rel['conformance'] * 100:.4f}% of {rel['valid_pairs']} rows), "
-                    f"but {rel['violation_count']} rows break that order."
+                    f"{rel['column_lo']} is normally not more than {rel['column_hi']} "
+                    f"(true in {rel['conformance'] * 100:.2f}% of {rel['valid_pairs']:,} rows), "
+                    f"but in {rel['violation_count']:,} rows it is more."
                 ),
-                "recommendation": f"Check rows where {rel['column_lo']} > {rel['column_hi']} for swapped or mis-entered values.",
+                "recommendation": f"Check the rows where {rel['column_lo']} is more than {rel['column_hi']}; the values may be swapped or mistyped.",
                 "fixable": "no",
                 "status": "flagged",
                 "row_reference": {

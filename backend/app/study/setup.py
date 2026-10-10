@@ -10,7 +10,7 @@ schema docs through workspaces.config_from. Rebuilding replaces the
 previous copy (and with it any participant decisions on it).
 
 Study-dataset curation (agreed 10 Oct 2026): pairwise ordering rules
-("X is usually <= Y") are left out of the copy. With real column names
+("X is normally not more than Y") are left out of the copy. With real column names
 most of them read as nonsense (e.g. "Price <= InvoiceNo"), which would
 measure detection noise instead of usability. This is a fixed,
 mechanical filter -- no issue-by-issue judgement -- and the ordering

@@ -47,7 +47,7 @@ def test_spurious_relationship_shows_high_orphan_rate_and_low_severity():
     assert len(issues) == 1
     assert issues[0]["row_reference"]["count"] == 19205
     assert issues[0]["severity"] == "low"
-    assert "spurious" in issues[0]["description"]
+    assert "may not be real" in issues[0]["description"]   # plain-English spurious-link note
 
 
 def test_small_orphan_rate_fires_high_severity():

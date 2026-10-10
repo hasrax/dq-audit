@@ -11,6 +11,7 @@ from __future__ import annotations
 import pandas as pd
 
 from app.rules.registry import record_rule
+from app.rules.describe import share_text
 
 SEVERITY_ORDER = ["low", "medium", "high"]
 RULE_ID = "completeness_null_pct"
@@ -68,10 +69,10 @@ def check_completeness(
                 "error_type": "type1",
                 "severity": severity,
                 "description": (
-                    f"{col} is {null_pct}% null "
-                    f"({col_stats['null_count']} of {profile['row_count']} rows)."
+                    f"{col} is empty in {col_stats['null_count']:,} of {profile['row_count']:,} rows "
+                    f"({share_text(col_stats['null_count'], profile['row_count'])})."
                 ),
-                "recommendation": "Investigate why values are missing; consider making this field mandatory at entry if it is business-critical.",
+                "recommendation": "Find out why this is left blank. If it matters to the business, make it a required field when data is entered.",
                 "fixable": "no",
                 "status": "flagged",
                 "row_reference": {

@@ -59,10 +59,10 @@ def check_timeliness(
                     "error_type": "type1",
                     "severity": "high",
                     "description": (
-                        f"{col}'s most recent value ({max_date.date()}) is more than "
-                        f"{future_days} days in the future; {count} rows exceed {future_cutoff.date()}."
+                        f"{col} has dates in the future: {count:,} rows are later than "
+                        f"{future_cutoff.date()}, the latest being {max_date.date()}."
                     ),
-                    "recommendation": "Check for date-entry errors (wrong year/format) on these rows.",
+                    "recommendation": "Check these dates for typing mistakes, such as a wrong year.",
                     "fixable": "no",
                     "status": "flagged",
                     "row_reference": {"count": count, "sample_rows": sample_rows},
@@ -86,10 +86,10 @@ def check_timeliness(
                     "error_type": "type1",
                     "severity": "medium",
                     "description": (
-                        f"{col}'s most recent value is {max_date.date()}, more than "
-                        f"{stale_years} years old -- this column may be stale or a frozen/sentinel value."
+                        f"The latest {col} is {max_date.date()}, more than {stale_years} years ago, "
+                        f"so this field may no longer be filled in, or may hold a placeholder date."
                     ),
-                    "recommendation": "Confirm whether this column is still being populated, or whether it is a placeholder/legacy field.",
+                    "recommendation": "Check whether this field is still used. If not, it may be an old field that can be ignored.",
                     "fixable": "no",
                     "status": "flagged",
                     "row_reference": {"count": non_null_count, "sample_rows": sample_rows},

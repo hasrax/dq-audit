@@ -123,8 +123,7 @@ def test_reviewer_gets_no_admin_pages():
     at = _app(REVIEWER)
     assert not at.exception
     pages = set(at.session_state["_pages"])
-    assert {"triage", "ask", "rules"} <= pages
-    assert not pages & {"new-audit", "schema", "organisation", "settings"}
+    assert pages == {"overview", "triage", "ask", "scores", "rules"}      # Review + Insights only
 
 
 def test_reviewer_cannot_open_an_admin_page_by_link():

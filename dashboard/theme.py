@@ -197,8 +197,11 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 .issue-row .top {{ display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }}
 .issue-row .loc {{ font-weight: 700; color: var(--text); }}
 .issue-row .loc .col {{ font-weight: 500; color: var(--muted); }}
-.issue-row .sum {{ margin-top: 4px; color: var(--text); font-size: .93rem; line-height: 1.45;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.issue-row .sum {{ margin-top: 5px; color: var(--text); font-size: .95rem; line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
+.issue-row .dot {{ display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 9px;
+  vertical-align: middle; }}
+.group-card {{ box-shadow: 4px 4px 0 -1px var(--surface-2), 4px 4px 0 0 var(--border); }}
 .issue-row .meta {{ margin-top: 3px; color: var(--faint); font-size: .8rem; }}
 .section-label {{ font-size: .78rem; text-transform: uppercase; letter-spacing: .5px; color: var(--faint);
   margin: 14px 0 4px 0; font-weight: 650; }}

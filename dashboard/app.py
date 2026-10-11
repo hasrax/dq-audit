@@ -12,6 +12,7 @@ Run:
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import os
 import sys
@@ -55,6 +56,7 @@ from app.chat import assistant
 from app.chat import threads as chat_threads
 from app.reports.audit_report import build_markdown as standard_report_md
 from app.reports.render import to_docx, to_pdf
+from app.reports import grouping
 from app.eval import live as live_eval
 from app.auth import users as auth
 from app.llm import selection as llm_selection
@@ -936,6 +938,25 @@ def _render_triage(conn, upload: dict) -> None:
     elif filters["trend"] != ALL:
         issues = [i for i in issues if i.get("trend_status") == filters["trend"]]
     aliases = _aliases(conn, upload["source_client"])
+    # v2 (after the usability study): what people see first. Every issue is
+    # still stored and counted; see app.reports.grouping.
+    unused = grouping.unused_rule_ids(repository.fetch_rules(conn, uid))
+    attention = grouping.needs_attention(issues, unused)
+    view = st.segmented_control(
+        "Show", ["attention", "all"], default="attention", key="triage_view", label_visibility="collapsed",
+        format_func=lambda v: f"Needs attention ({len(attention)})" if v == "attention" else f"All issues ({len(issues)})")
+    fields = grouping.unused_fields(issues, unused)
+    if fields:
+        n_fields = sum(len(c) for c in fields.values())
+        with st.expander(f"{n_fields} field(s) are never filled in — listed here once, not as separate issues",
+                         icon=":material/info:"):
+            st.caption("These columns are empty in (almost) every row, so they are probably not used by the "
+                       "business. They still appear under All issues.")
+            for table, cols in fields.items():
+                names = ", ".join(display_columns(aliases, table, c) or c for c in cols)
+                st.markdown(f"**{html.escape(table)}**: {html.escape(names)}")
+    if view != "all":
+        issues = attention
     head_l, head_csv, head_xlsx = st.container(key="row_downloads").columns([3, 1, 1])
     head_l.caption(f"Showing {len(issues)} issue(s)")
     if issues:
@@ -963,9 +984,37 @@ def _render_triage(conn, upload: dict) -> None:
         if not _is_participant():
             _render_bulk_actions(conn, [i["id"] for i in issues])
     else:
-        st.info("No issues match these filters. Try setting **Status** to *All*.")
-    for issue in issues:
-        _issue_row(conn, issue, aliases)
+        st.info("No issues match these filters. Try setting **Status** to *All*, or show **All issues**.")
+    for item in grouping.group(issues):
+        if item["kind"] == "issue":
+            _issue_row(conn, item["issue"], aliases)
+        else:
+            _group_card(conn, item, aliases)
+
+
+def _group_card(conn, item: dict, aliases: dict) -> None:
+    """Several issues from the same check on one table, as one card."""
+    color = SEVERITY_COLOR.get(item["severity"], ui.MUTED)
+    cols = [(display_columns(aliases, item["table"], i["column_name"]) or "whole row").replace(", ", " & ")
+            for i in item["issues"]]
+    preview = ", ".join(cols[:4]) + (f" and {len(cols) - 4} more" if len(cols) > 4 else "")
+    meta = [item["severity"].title() + " (highest)", f"{len(item['issues'])} issues", "Found by rules"]
+    if item["rows"]:
+        meta.insert(2, f"{item['rows']:,} rows in total")
+    key = hashlib.md5(item["key"].encode()).hexdigest()[:10]
+    with st.container(key=f"grp_{key}"):
+        st.markdown(
+            f'''<div class="issue-row group-card" style="--sev:{color}">
+  <div class="top"><span class="loc"><span class="dot" style="background:{color}"></span>{html.escape(item["table"])}
+  <span class="col">· {html.escape(item["title"])}</span></span></div>
+  <div class="sum">{html.escape(preview)}</div>
+  <div class="meta">{html.escape(" · ".join(meta))}</div>
+</div>''',
+            unsafe_allow_html=True,
+        )
+        with st.expander(f"Show the {len(item['issues'])} issues"):
+            for issue in item["issues"]:
+                _issue_row(conn, issue, aliases)
 
 
 def _render_settings(conn) -> None:
@@ -2120,17 +2169,22 @@ def _issue_row(conn, issue: dict, aliases: dict) -> None:
     rows = issue.get("affected_row_count")
     if rows is None:
         rows = (issue.get("row_reference") or {}).get("count")
-    meta = [issue["dimension"].replace("_", " ")]
+    meta = [issue["severity"].title(), issue["dimension"].replace("_", " ").capitalize()]
     if rows is not None:
-        meta.append(f"{rows:,} row(s) affected")
-    if issue.get("fixable") == "yes":
-        meta.append("fixable")
+        meta.append(f"{rows:,} row{'s' if rows != 1 else ''}")
+    meta.append("Found by AI" if issue["source"] == "llm" else "Found by rules")
+    if issue.get("trend_status") in ("worsening", "improving"):
+        meta.append("getting worse" if issue["trend_status"] == "worsening" else "improving")
+    status = ""
+    if issue["status"] != "flagged":
+        label, color = ui.STATUS[issue["status"]]
+        status = _pill(label, color)
     row = st.container(key=f"irow_{issue['id']}")   # phones: actions wrap under the text
     text, decide_a, decide_r, open_b = row.columns([8.4, 0.75, 0.75, 1.1], vertical_alignment="center")
     text.markdown(
         f'''<div class="issue-row" style="--sev:{sev_color}">
-  <div class="top"><span class="loc">{_location_html(issue, aliases)}</span>
-  <span class="pills">{_issue_pills(issue)}</span></div>
+  <div class="top"><span class="loc"><span class="dot" style="background:{sev_color}"></span>{_location_html(issue, aliases)}</span>
+  <span class="pills">{status}</span></div>
   <div class="sum">{html.escape(issue["description"] or "")}</div>
   <div class="meta">{html.escape(" · ".join(meta))}</div>
 </div>''',

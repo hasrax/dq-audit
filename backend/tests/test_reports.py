@@ -45,5 +45,7 @@ def test_standard_report_builds_for_a_real_upload():
         pytest.skip("no uploads")
     md = build_markdown(conn, uploads[0])
     assert md.startswith("# Data quality audit report")
-    assert "## Scores by dimension" in md and "## Issues that need attention" in md
+    for section in ("## 1. Executive summary", "## 2. Scope", "## 3. Method", "## 4. Results",
+                    "## 5. Key findings", "## 6. Recommendations", "## Appendix A. Definitions"):
+        assert section in md
     assert to_pdf(md).startswith(b"%PDF")

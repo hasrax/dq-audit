@@ -805,21 +805,24 @@ def _import_dialog(conn) -> None:
 
 
 # url path -> (title, material icon, section); order = sidebar order.
+# Sidebar sections by purpose. Reviewers (non-technical) see Review and
+# Insights; admins also see Data setup, Research and System; study
+# participants see only Overview / Triage / Ask.
 PAGE_SPECS = {
     "overview": ("Overview", "dashboard", "Review"),
     "triage": ("Triage", "fact_check", "Review"),
     "ask": ("Ask", "forum", "Review"),
-    "rules": ("Rules", "rule", "Understand"),
-    "scores": ("Scores & trend", "monitoring", "Understand"),
-    "relationships": ("Relationships", "account_tree", "Understand"),
-    "evaluation": ("Evaluation", "query_stats", "Understand"),
-    "new-audit": ("New audit", "upload_file", "Administration"),
-    "schema": ("Schema review", "menu_book", "Administration"),
-    "organisation": ("Organisation", "domain", "Administration"),
-    "settings": ("Settings", "settings", "Administration"),
-    "study": ("Study", "science", "Administration"),
+    "scores": ("Scores & trend", "monitoring", "Insights"),
+    "rules": ("Rules", "rule", "Insights"),
+    "new-audit": ("New audit", "upload_file", "Data setup"),
+    "schema": ("Schema review", "menu_book", "Data setup"),
+    "relationships": ("Relationships", "account_tree", "Data setup"),
+    "organisation": ("Organisation", "domain", "Data setup"),
+    "evaluation": ("Evaluation", "query_stats", "Research"),
+    "study": ("Study", "science", "Research"),
+    "settings": ("Settings", "settings", "System"),
 }
-ADMIN_PAGES = {"new-audit", "schema", "organisation", "settings", "study"}
+ADMIN_PAGES = {"new-audit", "schema", "relationships", "organisation", "evaluation", "study", "settings"}
 
 
 def _build_navigation(conn, slug: str, upload: dict | None, admin: bool, participant: bool = False):

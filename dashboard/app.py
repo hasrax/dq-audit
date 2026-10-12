@@ -324,13 +324,14 @@ def main() -> None:
             upload = by_id.get(picked, uploads[0])
 
     navigation = _build_navigation(conn, slug, upload, admin)
-    _render_sidebar_nav(admin)
-    if upload is not None:
+    def review_progress() -> None:       # sits right under the Review pages
         counts = repository.triage_counts(conn, upload["id"])
-        st.sidebar.markdown('<div class="sidebar-section">Review progress</div>', unsafe_allow_html=True)
-        s1, s2 = st.sidebar.columns(2)
-        s1.metric("To review", counts.get("flagged", 0))
-        s2.metric("Reviewed", sum(counts.get(k, 0) for k in ("accepted", "rejected", "considered")))
+        with st.sidebar.container(key="review_progress"):
+            s1, s2 = st.columns(2)
+            s1.metric("To review", counts.get("flagged", 0))
+            s2.metric("Reviewed", sum(counts.get(k, 0) for k in ("accepted", "rejected", "considered")))
+
+    _render_sidebar_nav(admin, after_review=review_progress if upload is not None else None)
     with st.sidebar.expander(f"About {APP_NAME}", icon=":material/info:"):
         st.markdown(ABOUT_MD)
     _render_account_sidebar()
@@ -572,16 +573,22 @@ def _new_company_dialog(conn) -> None:
         st.rerun()
 
 
-def _render_sidebar_nav(admin: bool) -> None:
+def _render_sidebar_nav(admin: bool, after_review=None) -> None:
+    """Sidebar pages by section; `after_review` (e.g. the review progress
+    summary) is drawn right after the Review pages."""
     pages = st.session_state["_pages"]
     section = None
     for key, (title, icon, sec) in PAGE_SPECS.items():
         if key not in pages:
             continue
         if sec != section:
+            if section == "Review" and after_review:
+                after_review()
             st.sidebar.markdown(f'<div class="sidebar-section">{sec}</div>', unsafe_allow_html=True)
             section = sec
         st.sidebar.page_link(pages[key], label=title, icon=f":material/{icon}:")
+    if section == "Review" and after_review:      # only the Review section was shown
+        after_review()
 
 
 def _audit_bar(conn, slug: str) -> dict | None:

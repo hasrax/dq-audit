@@ -123,6 +123,10 @@ p, li {{ line-height: 1.6; }}
 [data-testid="stSidebar"] .sidebar-section {{ font-size: .72rem; font-weight: 700; letter-spacing: .6px;
   text-transform: uppercase; color: var(--faint); margin: 14px 0 2px 4px; }}
 [data-testid="stSidebar"] [data-testid="stPageLink"] a {{ padding: 6px 10px; border-radius: 10px; }}
+.st-key-review_progress {{ margin: 2px 0 4px 0; padding: 8px 12px; border: 1px solid var(--border);
+  border-radius: 12px; background: var(--surface); }}
+.st-key-review_progress [data-testid="stMetricValue"] {{ font-size: 1.35rem; }}
+.st-key-review_progress [data-testid="stMetricLabel"] p {{ font-size: .78rem; color: var(--muted); }}
 .company-card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px 14px 20px; }}
 .company-card .cname {{ font-size: 1.15rem; font-weight: 700; color: var(--text); }}
 .company-card .cmeta {{ font-size: .86rem; color: var(--muted); margin-top: 2px; }}

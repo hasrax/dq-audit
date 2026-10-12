@@ -1240,6 +1240,8 @@ def _render_chat(conn, upload: dict) -> None:
         with st.spinner("Thinking…"):
             try:
                 reply = assistant.answer(conn, upload, question, [dict(m) for m in history], focus)
+                if reply.endswith(assistant.FALLBACK_NOTE):
+                    _study_log("chat_fallback", {})
             except Exception as exc:  # noqa: BLE001 -- show the problem instead of crashing the page
                 reply = f"Sorry — the assistant is unavailable right now ({exc.__class__.__name__}). Please try again."
                 _study_log("chat_failed", {"error": exc.__class__.__name__})

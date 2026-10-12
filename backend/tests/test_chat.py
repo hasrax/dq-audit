@@ -57,3 +57,27 @@ def test_example_rows_are_masked_but_comparable(monkeypatch):
     user_tokens = [l.split("UserID = ")[1].split(";")[0] for l in lines[1:]]
     assert user_tokens[0] == user_tokens[1] and user_tokens[0].startswith("MASK_")   # equal values stay equal
     assert assistant._example_rows(_TypesConn(), {**issue, "row_reference": {"count": 1}}, {}) == []
+
+
+def test_chat_falls_back_only_when_main_model_fails(monkeypatch):
+    import pytest
+
+    from app.chat import assistant
+
+    class Broken:
+        def chat(self, *a, **k):
+            raise RuntimeError("rate limited")
+
+    class Works:
+        def chat(self, *a, **k):
+            return "answer"
+
+    monkeypatch.setattr(assistant, "build_context", lambda *a, **k: "ctx")
+    monkeypatch.setattr(assistant, "LLMClient", Broken)
+    monkeypatch.setattr(assistant, "fallback_clients", lambda: [Broken(), Works()])   # first backup busy
+    assert assistant.answer(None, {}, "q", []) == "answer" + assistant.FALLBACK_NOTE
+    with pytest.raises(RuntimeError):            # an explicit client (evaluation) never falls back
+        assistant.answer(None, {}, "q", [], client=Broken())
+    monkeypatch.setattr(assistant, "fallback_clients", lambda: [])
+    with pytest.raises(RuntimeError):            # no backup configured: the error surfaces as before
+        assistant.answer(None, {}, "q", [])

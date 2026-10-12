@@ -389,7 +389,7 @@ def write_recall(path: Path, who: str, rows: list[dict], flags: dict, aliases: d
     wb.save(path)
 
 
-def column_docs(conn, comps: list[dict], flags: dict) -> list[dict]:
+def column_docs(conn, comps: list[dict], flags: dict, aliases: dict) -> list[dict]:
     out = []
     for c in comps:
         docs = {(t, col): (name, desc, conf) for t, col, name, desc, conf in conn.execute(
@@ -398,7 +398,8 @@ def column_docs(conn, comps: list[dict], flags: dict) -> list[dict]:
         for t, df in flags[c["slug"]]["tables"].items():
             for col in df.columns:
                 name, desc, conf = docs.get((t, col), (None, None, None))
-                out.append({"label": c["label"], "table": t, "column": col, "name": name or "",
+                real = aliases[c["slug"]].get(t, {}).get(col)       # verified source-system name first
+                out.append({"label": c["label"], "table": t, "column": col, "name": real or name or "",
                             "description": desc or "No description yet.",
                             "status": "verified" if conf == "VERIFIED" else ("AI draft (unverified)" if desc else "")})
     return out
@@ -449,7 +450,7 @@ def main(argv: list[str] | None = None) -> None:
                [[r["no"], r["label"], r["table"], r["row"], "Y" if r["subset"] else "N"] for r in rows])
 
     tables = {c["slug"]: flags[c["slug"]]["tables"] for c in comps}
-    docs = column_docs(conn, comps, flags)
+    docs = column_docs(conn, comps, flags, aliases)
     write_triage(out / f"Triage_Agreement_{args.reviewer}.xlsx", args.reviewer, items, aliases, tables, masker)
     write_recall(out / f"Recall_Check_{args.reviewer}.xlsx", f"reviewer {args.reviewer}",
                  [r for r in rows if r["subset"]], flags, aliases, docs, masker, mark_subset=False)

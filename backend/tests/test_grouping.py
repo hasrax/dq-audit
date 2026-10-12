@@ -1,9 +1,14 @@
 from app.reports import grouping
 
 
+DIMS = {"completeness_null_pct": "completeness", "cross_table_fk_orphan": "cross_table",
+        "consistency_ordering_violation": "consistency", "validity_negative_value": "validity"}
+
+
 def _i(id_, table, rule, sev="high", source="rule", ref=None, rows=1):
     return {"id": id_, "table_name": table, "column_name": f"c{id_}", "rule_id": rule, "severity": sev,
-            "source": source, "rule_ref": ref, "affected_row_count": rows}
+            "source": source, "rule_ref": ref, "affected_row_count": rows,
+            "dimension": DIMS.get(rule, "accuracy")}
 
 
 def test_unused_fields_and_attention():
@@ -27,3 +32,12 @@ def test_group_keeps_order_and_never_groups_ai():
     g = items[0]
     assert g["title"] == "2 pairs of values are in an unexpected order" and g["rows"] == 12
     assert g["severity"] == "high" and [m["id"] for m in g["issues"]] == [1, 3]
+
+
+def test_priority_prefers_weighty_dimensions_and_bigger_problems():
+    missing = _i(1, "T", "completeness_null_pct", rows=450_000)    # huge, but only missing values
+    broken = _i(2, "T", "cross_table_fk_orphan", rows=100)
+    small_broken = _i(3, "U", "cross_table_fk_orphan", sev="low", rows=1)
+    order = grouping.by_priority(grouping.group([missing, small_broken, broken]))
+    assert [x["issue"]["id"] for x in order] == [2, 1, 3]       # severity, then type weight, then rows
+    assert grouping.type_label("accuracy") == grouping.type_label("validity") == "Wrong values"

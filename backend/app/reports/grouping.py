@@ -13,6 +13,8 @@ counted in the evaluation; this only decides what a reader sees first:
 """
 from __future__ import annotations
 
+from functools import lru_cache
+
 UNUSED_NULL_PCT = 99.9        # empty in at least this share of rows -> an unused field
 SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
 
@@ -85,3 +87,40 @@ def group(issues: list[dict]) -> list[dict]:
         else:
             items.append({"kind": "issue", "issue": i})
     return items
+
+
+# --- importance order and plain issue types (v2) ---------------------------------
+
+TYPE_LABELS = {
+    "completeness": "Missing values", "validity": "Wrong values", "accuracy": "Wrong values",
+    "consistency": "Inconsistent values", "uniqueness": "Duplicates", "cross_table": "Broken links",
+    "timeliness": "Date problems",
+}
+
+
+def type_label(dimension: str) -> str:
+    return TYPE_LABELS.get(dimension, dimension.replace("_", " ").capitalize())
+
+
+def priority(issue: dict) -> tuple:
+    """Sort key, most important first: severity, then how much that kind of
+    problem weighs in the DQ score (consistency / cross-table highest), then
+    the number of rows affected."""
+    from app.scoring.score import DIMENSION_ALIASES, SEVERITY_POINTS
+
+    dim = DIMENSION_ALIASES.get(issue["dimension"], issue["dimension"])
+    return (SEVERITY_POINTS.get(issue["severity"], 1), _weights().get(dim, 0.1),
+            issue.get("affected_row_count") or 0)
+
+
+@lru_cache(maxsize=1)
+def _weights() -> dict[str, float]:
+    from app.scoring.score import load_weights
+    return load_weights()
+
+
+def by_priority(items: list[dict]) -> list[dict]:
+    """Most important first; a group counts as its most important member."""
+    def score(item):
+        return priority(item["issue"]) if item["kind"] == "issue" else max(priority(i) for i in item["issues"])
+    return sorted(items, key=score, reverse=True)

@@ -117,7 +117,7 @@ def build_markdown(conn, upload: dict) -> str:
         rows.append(f"| {s.title()} | {r} | {a} | {r + a} |")
     md.append("\n".join(rows))
 
-    items = grouping.group(attention)[:TOP_FINDINGS]
+    items = grouping.by_priority(grouping.group(attention))[:TOP_FINDINGS]
     md.append(f"## 5. Key findings (the first {len(items)} to address)")
     if not items:
         md.append("No open findings need attention.")

@@ -964,6 +964,12 @@ def _render_triage(conn, upload: dict) -> None:
                 st.markdown(f"**{html.escape(table)}**: {html.escape(names)}")
     if view != "all":
         issues = attention
+    types = Counter(grouping.type_label(i["dimension"]) for i in issues)
+    if len(types) > 1:   # plain issue types, so the mix is visible at a glance
+        pick = st.pills("Issue types", list(types), selection_mode="single", key=f"triage_type_{view}",
+                        format_func=lambda t: f"{t} {types[t]}", label_visibility="collapsed")
+        if pick:
+            issues = [i for i in issues if grouping.type_label(i["dimension"]) == pick]
     head_l, head_csv, head_xlsx = st.container(key="row_downloads").columns([3, 1, 1])
     head_l.caption(f"Showing {len(issues)} issue(s)")
     if issues:
@@ -992,7 +998,7 @@ def _render_triage(conn, upload: dict) -> None:
             _render_bulk_actions(conn, [i["id"] for i in issues])
     else:
         st.info("No issues match these filters. Try setting **Status** to *All*, or show **All issues**.")
-    for item in grouping.group(issues):
+    for item in grouping.by_priority(grouping.group(issues)):     # most important first
         if item["kind"] == "issue":
             _issue_row(conn, item["issue"], aliases)
         else:

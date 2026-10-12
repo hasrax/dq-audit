@@ -4,7 +4,7 @@ import pandas as pd
 from openpyxl import Workbook
 
 from app.eval import agreement as ag
-from app.eval.reviewer_pack import allocate, systematic
+from app.eval.reviewer_pack import allocate, named, systematic
 from app.rules.engine import run_rules
 
 
@@ -99,3 +99,12 @@ def test_read_and_score_recall(tmp_path):
     assert mhg["rows_rated"] == 3 and mhg["miss_rate_pct"] == 0.0
     assert r2["rows_rated"] == 2 and r2["issues_found"] == 1
     assert agree[0]["n"] == 2 and agree[0]["agreement_pct"] == 50.0
+
+
+def test_named_replaces_positional_columns():
+    al = {"Lines": {"col_10": "Item Order", "col_1": "Line No"}, "Head": {"col_1": "Receipt Code"}}
+    text = "810 rows in Lines have a value in col_10 that does not match any col_1 in Head."
+    assert named(text, "Lines", al) == ("810 rows in Lines have a value in Item Order that does not match any "
+                                        "Receipt Code in Head.")
+    assert named("Checks Item Order (col_10) and col_1", "Lines", al) == "Checks Item Order (col_10) and Line No"
+    assert named("col_99 stays", "Lines", al) == "col_99 stays" and named(None, "Lines", al) == ""

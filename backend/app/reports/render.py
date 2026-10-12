@@ -17,9 +17,10 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt, RGBColor
 from fpdf import FPDF
 
-ACCENT = (46, 125, 99)       # sage (light theme), readable on white paper
-TEXT = (30, 33, 39)
-MUTED = (91, 98, 112)
+# Black and white: reports are formal documents that are printed and filed.
+ACCENT = (0, 0, 0)
+TEXT = (0, 0, 0)
+MUTED = (90, 90, 90)
 BOLD_RE = re.compile(r"(\*\*[^*]+\*\*)")
 TABLE_SEP_RE = re.compile(r"^\|?\s*:?-{2,}")
 
@@ -100,7 +101,7 @@ def to_docx(md: str, footer: str = "") -> bytes:
             rows = block[1]
             width = max(len(r) for r in rows)
             table = doc.add_table(rows=0, cols=width)
-            table.style = "Light Grid Accent 1"
+            table.style = "Table Grid"
             for r_idx, row in enumerate(rows):
                 cells = table.add_row().cells
                 for c_idx in range(width):

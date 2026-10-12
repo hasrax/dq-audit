@@ -1,0 +1,11 @@
+{
+  "_comment": "Company E (invoicing and accounting system). Always masked before any AI call: customer and supplier names, contacts, addresses, phone / fax / VAT numbers, e-mail, free-text remarks. CustomerID often holds a phone or national ID number, so it is masked too (consistent tokens keep links between tables).",
+  "CustomerMaster": {"mask": ["CustomerID", "CustomerName", "Address", "Tel", "VatNo"]},
+  "InvoiceHeader": {"mask": ["CustomerName", "CustomerVatNo", "Remarks"]},
+  "QuotationHeader": {"mask": ["CustomerName", "CustomerAddress", "CustomerTel", "YourRef"]},
+  "SupplierMaster": {"mask": ["CompanyName", "ContactName", "SupplierAddress", "SupplierTel", "SupplierFax", "EMailAddress"]},
+  "GRNHeader": {"mask": ["Remarks"]},
+  "ItemMaster": {"mask": ["Remarks"]},
+  "PurchaseReturnHeader": {"mask": ["Remarks"]},
+  "SalesReturnHeader": {"mask": ["Remarks", "Collected"]}
+}

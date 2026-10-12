@@ -1,0 +1,13 @@
+{
+  "_comment": "Company F (stock-transfer / distribution system, same software family as Company E). Always masked before any AI call: supplier names, contacts, addresses, phone / fax, e-mail, the person who collected goods, customer codes and free-text remarks.",
+  "SupplierMaster": {"mask": ["CompanyName", "ContactName", "SupplierAddress", "SupplierTel", "SupplierFax", "EMailAddress"]},
+  "InvoiceHeader": {"mask": ["CustomerCode", "Remarks"]},
+  "PurchaseReturnHeader": {"mask": ["Collected", "Remarks"]},
+  "StockTakingDetails": {"mask": ["CollectedPerson"]},
+  "DemandHed": {"mask": ["Remarks"]},
+  "DemandDtl": {"mask": ["Remarks"]},
+  "GRNHeader": {"mask": ["Remarks"]},
+  "ItemMaster": {"mask": ["Remarks"]},
+  "TransferInHeader": {"mask": ["Remarks"]},
+  "TransferOutHeader": {"mask": ["Remarks"]}
+}

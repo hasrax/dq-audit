@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import csv
 import random
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -60,6 +61,23 @@ FILL = PatternFill("solid", start_color="FFF6E7")          # cells the reviewer 
 HEAD_FILL = PatternFill("solid", start_color="E8EEF4")
 WRAP = Alignment(wrap_text=True, vertical="top")
 BOLD = Font(bold=True)
+
+
+# --- readable names (pure, tested) ---------------------------------------------
+
+COL_IN_TABLE = re.compile(r"\b(col_\d+) in (\w+)")
+COL = re.compile(r"(?<!\()\bcol_\d+\b(?!\))")
+
+
+def named(text: str | None, table: str, aliases: dict[str, dict[str, str]]) -> str:
+    """Replace positional names (col_N) in issue text with the company's column names.
+    "col_1 in OtherTable" uses OtherTable's names; "Name (col_N)" is left alone."""
+    if not text:
+        return text or ""
+    text = COL_IN_TABLE.sub(lambda m: f"{aliases.get(m.group(2), {}).get(m.group(1), m.group(1))} in {m.group(2)}",
+                            text)
+    names = aliases.get(table, {})
+    return COL.sub(lambda m: names.get(m.group(0), m.group(0)), text)
 
 
 # --- sampling helpers (pure, tested) -------------------------------------------
@@ -273,8 +291,9 @@ def write_triage(path: Path, reviewer: str, items: list[dict], aliases: dict, ta
         if count:
             evidence += f" Affected rows: {count:,}."
         values = _examples(i, cols, tables[c["slug"]], names, masker)
-        row = [n, c["label"], i["table_name"], column, i["description"], evidence, values,
-               i["recommendation"] or ""]
+        al = aliases[c["slug"]]
+        row = [n, c["label"], i["table_name"], column, named(i["description"], i["table_name"], al),
+               named(evidence, i["table_name"], al), values, named(i["recommendation"], i["table_name"], al)]
         for j, v in enumerate(row, start=1):
             s.cell(row=n + 1, column=j, value=v).alignment = WRAP
         for j in (9, 10):
@@ -332,7 +351,7 @@ def write_recall(path: Path, who: str, rows: list[dict], flags: dict, aliases: d
         names = aliases[slug].get(table, {})
         s = wb.create_sheet(f"{label[-1]} {table}"[:31])
         s.cell(row=1, column=1, value=f"{label} - {table}: {len(items)} rows to check").font = BOLD
-        wide = flags[slug]["wide"][table]
+        wide = [named(w, table, aliases[slug]) for w in flags[slug]["wide"][table]]
         note = "Already reported for the whole column (do not mark again): " + (
             " | ".join(wide) if wide else "nothing")
         s.cell(row=2, column=1, value=note).alignment = WRAP

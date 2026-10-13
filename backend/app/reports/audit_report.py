@@ -117,7 +117,17 @@ def build_markdown(conn, upload: dict) -> str:
         rows.append(f"| {s.title()} | {r} | {a} | {r + a} |")
     md.append("\n".join(rows))
 
-    items = grouping.group(attention)[:TOP_FINDINGS]
+    md.append("### 4.3 What to do first")
+    acts = [grouping.action_category(i, unused) for i in open_issues]
+    rows = ["| Action | Issues | Meaning |", "|---|---|---|",
+            f"| Fix now | {acts.count('fix_now')} | High-severity problems with links, consistency, duplicates "
+            "or wrong values |",
+            f"| Check with the business | {acts.count('check')} | AI findings that need a person's judgement |",
+            f"| Can wait | {acts.count('can_wait')} | Lower-priority problems, mostly missing values |",
+            f"| Not in use | {acts.count('not_used')} | Fields never filled in (Appendix B) |"]
+    md.append("\n".join(rows))
+
+    items = grouping.by_priority(grouping.group(attention))[:TOP_FINDINGS]
     md.append(f"## 5. Key findings (the first {len(items)} to address)")
     if not items:
         md.append("No open findings need attention.")

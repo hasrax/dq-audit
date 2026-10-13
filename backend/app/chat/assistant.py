@@ -22,6 +22,8 @@ a function-catalogue approach is future work.
 """
 from __future__ import annotations
 
+import dataclasses
+import os
 from collections import Counter
 
 import psycopg
@@ -29,6 +31,7 @@ from psycopg.rows import dict_row
 
 from app.aliases import base_client, client_label
 from app.db import repository
+from app.config import load_settings
 from app.llm.client import LLMClient
 from app.privacy.pseudonymize import load_overrides, mask_value
 from app.schema_docs.store import display_aliases, get_schema_context
@@ -191,16 +194,50 @@ def build_context(conn: psycopg.Connection, upload: dict, issue: dict | list[dic
     return "\n\n".join(parts)
 
 
+# Chat-only backup models (LLM_CHAT_FALLBACK = "name|base_url|model|KEY_ENV;name|..."),
+# tried in order -- one quick attempt each -- only when the main model still fails
+# after its own retries. Audits, schema docs and reports never fall back, so
+# evaluation numbers stay on one model.
+FALLBACK_NOTE = "\n\n_(Answered by the backup AI model because the main one was unavailable.)_"
+
+
+def fallback_clients() -> list[LLMClient]:
+    clients = []
+    for chunk in filter(None, (c.strip() for c in os.environ.get("LLM_CHAT_FALLBACK", "").split(";"))):
+        parts = [p.strip() for p in chunk.split("|")] + [""] * 4
+        _name, base_url, model, key_env = parts[:4]
+        if base_url and model:
+            settings = dataclasses.replace(load_settings(), llm_base_url=base_url, llm_model=model,
+                                           llm_api_key=os.environ.get(key_env, "") if key_env else "")
+            clients.append(LLMClient(settings, max_retries=1))
+    return clients
+
+
 def answer(conn: psycopg.Connection, upload: dict, question: str, history: list[dict],
            issue: dict | list[dict] | None = None, client: LLMClient | None = None) -> str:
-    """One answer. history = prior turns [{role, content}], oldest first."""
+    """One answer. history = prior turns [{role, content}], oldest first.
+    If the main model fails (after its retries) and a backup is configured,
+    the backup answers and the reply ends with FALLBACK_NOTE."""
+    explicit = client is not None
     client = client or LLMClient()
     context = build_context(conn, upload, issue)
     messages = [{"role": "user", "content": f"CONTEXT FOR THIS CONVERSATION:\n{context}"},
                 {"role": "assistant", "content": "Understood. I will answer only from this context."}]
     messages += [{"role": m["role"], "content": m["content"]} for m in history[-HISTORY_TURNS:]]
     messages.append({"role": "user", "content": question})
-    return client.chat(SYSTEM_PROMPT, messages, temperature=0.1, max_tokens=700).strip()
+    try:
+        return client.chat(SYSTEM_PROMPT, messages, temperature=0.1, max_tokens=700).strip()
+    except Exception:
+        if explicit:
+            raise
+        for backup in fallback_clients():
+            try:
+                reply = backup.chat(SYSTEM_PROMPT, messages, temperature=0.1, max_tokens=700).strip()
+            except Exception:  # noqa: BLE001 -- busy free model: try the next one
+                continue
+            if reply:
+                return reply + FALLBACK_NOTE
+        raise
 
 
 REPORT_PROMPT = """\

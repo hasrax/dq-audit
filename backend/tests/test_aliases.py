@@ -35,9 +35,9 @@ def test_shipped_hemas_alias_file_is_valid_and_maps_grn_number():
     assert display_columns(aliases, "GRNHED", "col_1") == "GRN Number"
 
 
-def test_shipped_ussawatte_alias_file_is_valid_and_maps_customer_id():
+def test_shipped_ussawatte_alias_file_is_valid_and_maps_verified_names():
     aliases = load_aliases("ussawatte")  # from config/aliases/ussawatte.json
-    assert display_columns(aliases, "CustomerMaster", "col_1") == "Customer ID"
-    assert display_columns(aliases, "WhyNotBilling", "col_2") == "Customer ID"
+    assert display_columns(aliases, "CustomerMaster", "col_1") == "Customer Code"   # verified against the source database
+    assert display_columns(aliases, "WhyNotBilling", "col_2") == "Customer Code"
     # unmapped column falls back to positional
     assert display_columns(aliases, "CustomerMaster", "col_99") == "col_99"

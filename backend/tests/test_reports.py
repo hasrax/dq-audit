@@ -46,6 +46,7 @@ def test_standard_report_builds_for_a_real_upload():
     md = build_markdown(conn, uploads[0])
     assert md.startswith("# Data quality audit report")
     for section in ("## 1. Executive summary", "## 2. Scope", "## 3. Method", "## 4. Results",
-                    "## 5. Key findings", "## 6. Recommendations", "## Appendix A. Definitions"):
+                    "## 5. Key findings", "## 6. Recommendations", "## Appendix A. Definitions",
+                    "### 4.3 What to do first"):
         assert section in md
     assert to_pdf(md).startswith(b"%PDF")

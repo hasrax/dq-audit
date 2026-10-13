@@ -95,7 +95,8 @@ def load_study(conn: psycopg.Connection) -> tuple[pd.DataFrame, pd.DataFrame, di
             "SELECT t.*, EXTRACT(EPOCH FROM (t.ended_at - t.started_at)) AS seconds FROM study_task_events t "
             "WHERE t.code <> %s ORDER BY t.code, t.task_no", (PILOT_CODE,)).fetchall()
     chat_failed = dict(conn.execute(
-        "SELECT code, count(*) FROM study_events WHERE event = 'chat_failed' AND code <> %s GROUP BY code",
+        "SELECT code, count(*) FROM study_events WHERE event IN ('chat_failed', 'chat_fallback') "
+        "AND code <> %s GROUP BY code",
         (PILOT_CODE,)).fetchall())
     return pd.DataFrame(people), pd.DataFrame(tasks), chat_failed
 
@@ -139,7 +140,8 @@ def integrity(people: pd.DataFrame, sus: pd.DataFrame, utc_offset_h: float,
               chat_failed: dict[str, int] | None = None) -> pd.DataFrame:
     issued = set(people["code"]) if not people.empty else set()
     # the AI was down during a session: task 3 (and clarity scores) may reflect that, not the design
-    checks = [{"check": "AI chat failed during session", "code": code, "detail": f"{n} failed answer(s)"}
+    checks = [{"check": "AI chat failed during session", "code": code,
+               "detail": f"{n} answer(s) failed or came from the backup model"}
               for code, n in sorted((chat_failed or {}).items())]
     if sus.empty:
         return pd.DataFrame(checks, columns=["check", "code", "detail"])

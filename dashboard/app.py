@@ -133,6 +133,14 @@ def get_conn():
     return conn
 
 
+@st.cache_resource
+def _schema_ready() -> bool:
+    """Apply pending migrations once per server process, not on every click
+    (each check is a round trip to the hosted database)."""
+    repository.apply_schema(get_conn())
+    return True
+
+
 def _db():
     """The cached connection, reconnected once if the server dropped it
     (the hosted database suspends after a few idle minutes)."""
@@ -294,7 +302,7 @@ def main() -> None:
     st.markdown(ui.css(), unsafe_allow_html=True)
     try:
         conn = _db()
-        repository.apply_schema(conn)
+        _schema_ready()
     except psycopg.OperationalError:
         st.error("We can't reach the database right now. Please wait a minute and refresh the page.",
                  icon=":material/cloud_off:")
@@ -324,13 +332,14 @@ def main() -> None:
             upload = by_id.get(picked, uploads[0])
 
     navigation = _build_navigation(conn, slug, upload, admin)
-    _render_sidebar_nav(admin)
-    if upload is not None:
+    def review_progress() -> None:       # sits right under the Review pages
         counts = repository.triage_counts(conn, upload["id"])
-        st.sidebar.markdown('<div class="sidebar-section">Review progress</div>', unsafe_allow_html=True)
-        s1, s2 = st.sidebar.columns(2)
-        s1.metric("To review", counts.get("flagged", 0))
-        s2.metric("Reviewed", sum(counts.get(k, 0) for k in ("accepted", "rejected", "considered")))
+        with st.sidebar.container(key="review_progress"):
+            s1, s2 = st.columns(2)
+            s1.metric("To review", counts.get("flagged", 0))
+            s2.metric("Reviewed", sum(counts.get(k, 0) for k in ("accepted", "rejected", "considered")))
+
+    _render_sidebar_nav(admin, after_review=review_progress if upload is not None else None)
     with st.sidebar.expander(f"About {APP_NAME}", icon=":material/info:"):
         st.markdown(ABOUT_MD)
     _render_account_sidebar()
@@ -572,16 +581,22 @@ def _new_company_dialog(conn) -> None:
         st.rerun()
 
 
-def _render_sidebar_nav(admin: bool) -> None:
+def _render_sidebar_nav(admin: bool, after_review=None) -> None:
+    """Sidebar pages by section; `after_review` (e.g. the review progress
+    summary) is drawn right after the Review pages."""
     pages = st.session_state["_pages"]
     section = None
     for key, (title, icon, sec) in PAGE_SPECS.items():
         if key not in pages:
             continue
         if sec != section:
+            if section == "Review" and after_review:
+                after_review()
             st.sidebar.markdown(f'<div class="sidebar-section">{sec}</div>', unsafe_allow_html=True)
             section = sec
         st.sidebar.page_link(pages[key], label=title, icon=f":material/{icon}:")
+    if section == "Review" and after_review:      # only the Review section was shown
+        after_review()
 
 
 def _audit_bar(conn, slug: str) -> dict | None:
@@ -941,10 +956,13 @@ def _render_triage(conn, upload: dict) -> None:
     # v2 (after the usability study): what people see first. Every issue is
     # still stored and counted; see app.reports.grouping.
     unused = grouping.unused_rule_ids(repository.fetch_rules(conn, uid))
-    attention = grouping.needs_attention(issues, unused)
+    # what to do first: Fix now / Check with the business / Can wait (+ All issues)
+    by_action = {a: [i for i in issues if grouping.action_category(i, unused) == a] for a in grouping.ACTIONS}
+    views = [a for a in ("fix_now", "check", "can_wait") if by_action[a]] + ["all"]
     view = st.segmented_control(
-        "Show", ["attention", "all"], default="attention", key="triage_view", label_visibility="collapsed",
-        format_func=lambda v: f"Needs attention ({len(attention)})" if v == "attention" else f"All issues ({len(issues)})")
+        "Show", views, default=views[0], key="triage_action", label_visibility="collapsed",
+        format_func=lambda v: f"All issues ({len(issues)})" if v == "all"
+        else f"{grouping.ACTIONS[v]} ({len(by_action[v])})") or views[0]
     fields = grouping.unused_fields(issues, unused)
     if fields:
         n_fields = sum(len(c) for c in fields.values())
@@ -956,7 +974,13 @@ def _render_triage(conn, upload: dict) -> None:
                 names = ", ".join(display_columns(aliases, table, c) or c for c in cols)
                 st.markdown(f"**{html.escape(table)}**: {html.escape(names)}")
     if view != "all":
-        issues = attention
+        issues = by_action[view]
+    types = Counter(grouping.type_label(i["dimension"]) for i in issues)
+    if len(types) > 1:   # plain issue types, so the mix is visible at a glance
+        pick = st.pills("Issue types", list(types), selection_mode="single", key=f"triage_type_{view}",
+                        format_func=lambda t: f"{t} {types[t]}", label_visibility="collapsed")
+        if pick:
+            issues = [i for i in issues if grouping.type_label(i["dimension"]) == pick]
     head_l, head_csv, head_xlsx = st.container(key="row_downloads").columns([3, 1, 1])
     head_l.caption(f"Showing {len(issues)} issue(s)")
     if issues:
@@ -985,7 +1009,7 @@ def _render_triage(conn, upload: dict) -> None:
             _render_bulk_actions(conn, [i["id"] for i in issues])
     else:
         st.info("No issues match these filters. Try setting **Status** to *All*, or show **All issues**.")
-    for item in grouping.group(issues):
+    for item in grouping.by_priority(grouping.group(issues)):     # most important first
         if item["kind"] == "issue":
             _issue_row(conn, item["issue"], aliases)
         else:
@@ -1227,6 +1251,8 @@ def _render_chat(conn, upload: dict) -> None:
         with st.spinner("Thinking…"):
             try:
                 reply = assistant.answer(conn, upload, question, [dict(m) for m in history], focus)
+                if reply.endswith(assistant.FALLBACK_NOTE):
+                    _study_log("chat_fallback", {})
             except Exception as exc:  # noqa: BLE001 -- show the problem instead of crashing the page
                 reply = f"Sorry — the assistant is unavailable right now ({exc.__class__.__name__}). Please try again."
                 _study_log("chat_failed", {"error": exc.__class__.__name__})
@@ -1685,7 +1711,25 @@ def _render_relationships(conn, upload: dict) -> None:
                 st.rerun()
 
 
+def _welcome_card() -> None:
+    """First-visit guide for staff (participants have their task card instead)."""
+    if _is_participant() or st.session_state.get("welcome_seen"):
+        return
+    with st.container(border=True, key="welcome_card"):
+        text, close = st.columns([6, 1], vertical_alignment="center")
+        text.markdown(
+            "**New here? Start with these 3 steps**  \n"
+            "1. **Overview** — the data quality score and what was found.  \n"
+            "2. **Triage → Fix now** — open each issue, read *What was found* and *What to do*, then "
+            "Accept (a real problem) or Reject (not a problem).  \n"
+            "3. **Ask** — ask any question about an issue in your own words.")
+        if close.button("Got it", key="welcome_close", width="stretch"):
+            st.session_state["welcome_seen"] = True
+            st.rerun()
+
+
 def _render_overview(conn, upload: dict) -> None:
+    _welcome_card()
     uid = upload["id"]
     issues = repository.fetch_issues(conn, uid)
     score = repository.score_upload(conn, uid)

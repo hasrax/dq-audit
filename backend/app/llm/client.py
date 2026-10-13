@@ -22,7 +22,8 @@ _BACKOFF_SECONDS = 20
 
 
 class LLMClient:
-    def __init__(self, settings: Settings | None = None):
+    def __init__(self, settings: Settings | None = None, max_retries: int = _MAX_RETRIES):
+        self.max_retries = max_retries   # backups use 1: no long waits on a busy free model
         if settings is None:
             from app.llm.selection import selected_settings
 
@@ -56,7 +57,7 @@ class LLMClient:
         Retries with a fixed backoff on rate-limit / request-too-large-for-TPM
         errors so a batch of table audits survives a tight per-minute quota.
         """
-        for attempt in range(_MAX_RETRIES):
+        for attempt in range(self.max_retries):
             try:
                 resp = self._client.chat.completions.create(
                     model=self.settings.llm_model,
@@ -67,7 +68,7 @@ class LLMClient:
                 return resp.choices[0].message.content or ""
             except (RateLimitError, APIStatusError) as exc:
                 status = getattr(exc, "status_code", None)
-                if status in _RATE_LIMIT_STATUSES and attempt < _MAX_RETRIES - 1:
+                if status in _RATE_LIMIT_STATUSES and attempt < self.max_retries - 1:
                     time.sleep(_BACKOFF_SECONDS)
                     continue
                 raise

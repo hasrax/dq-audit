@@ -133,6 +133,14 @@ def get_conn():
     return conn
 
 
+@st.cache_resource
+def _schema_ready() -> bool:
+    """Apply pending migrations once per server process, not on every click
+    (each check is a round trip to the hosted database)."""
+    repository.apply_schema(get_conn())
+    return True
+
+
 def _db():
     """The cached connection, reconnected once if the server dropped it
     (the hosted database suspends after a few idle minutes)."""
@@ -294,7 +302,7 @@ def main() -> None:
     st.markdown(ui.css(), unsafe_allow_html=True)
     try:
         conn = _db()
-        repository.apply_schema(conn)
+        _schema_ready()
     except psycopg.OperationalError:
         st.error("We can't reach the database right now. Please wait a minute and refresh the page.",
                  icon=":material/cloud_off:")
@@ -1703,7 +1711,25 @@ def _render_relationships(conn, upload: dict) -> None:
                 st.rerun()
 
 
+def _welcome_card() -> None:
+    """First-visit guide for staff (participants have their task card instead)."""
+    if _is_participant() or st.session_state.get("welcome_seen"):
+        return
+    with st.container(border=True, key="welcome_card"):
+        text, close = st.columns([6, 1], vertical_alignment="center")
+        text.markdown(
+            "**New here? Start with these 3 steps**  \n"
+            "1. **Overview** — the data quality score and what was found.  \n"
+            "2. **Triage → Fix now** — open each issue, read *What was found* and *What to do*, then "
+            "Accept (a real problem) or Reject (not a problem).  \n"
+            "3. **Ask** — ask any question about an issue in your own words.")
+        if close.button("Got it", key="welcome_close", width="stretch"):
+            st.session_state["welcome_seen"] = True
+            st.rerun()
+
+
 def _render_overview(conn, upload: dict) -> None:
+    _welcome_card()
     uid = upload["id"]
     issues = repository.fetch_issues(conn, uid)
     score = repository.score_upload(conn, uid)

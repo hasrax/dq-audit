@@ -41,3 +41,12 @@ def test_priority_prefers_weighty_dimensions_and_bigger_problems():
     order = grouping.by_priority(grouping.group([missing, small_broken, broken]))
     assert [x["issue"]["id"] for x in order] == [2, 1, 3]       # severity, then type weight, then rows
     assert grouping.type_label("accuracy") == grouping.type_label("validity") == "Wrong values"
+
+
+def test_action_categories():
+    unused = {9}
+    assert grouping.action_category(_i(1, "T", "cross_table_fk_orphan"), unused) == "fix_now"
+    assert grouping.action_category(_i(2, "T", "completeness_null_pct"), unused) == "can_wait"
+    assert grouping.action_category(_i(3, "T", "completeness_null_pct", ref=9), unused) == "not_used"
+    assert grouping.action_category(_i(4, "T", None, source="llm"), unused) == "check"
+    assert grouping.action_category(_i(5, "T", "validity_negative_value", sev="medium"), unused) == "can_wait"

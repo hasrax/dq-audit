@@ -124,3 +124,27 @@ def by_priority(items: list[dict]) -> list[dict]:
     def score(item):
         return priority(item["issue"]) if item["kind"] == "issue" else max(priority(i) for i in item["issues"])
     return sorted(items, key=score, reverse=True)
+
+
+# --- action categories (what to do first) ------------------------------------------
+
+ACTIONS = {
+    "fix_now": "Fix now",
+    "check": "Check with the business",
+    "can_wait": "Can wait",
+    "not_used": "Not in use",
+}
+FIX_NOW_DIMENSIONS = {"cross_table", "consistency", "uniqueness", "validity", "accuracy"}
+
+
+def action_category(issue: dict, unused: set[int]) -> str:
+    """Fix now = high-severity rule findings on links, consistency, duplicates or
+    wrong values; Check = AI findings (need a person's judgement of the business
+    context); Not in use = fields never filled in; everything else can wait."""
+    if is_unused(issue, unused):
+        return "not_used"
+    if issue.get("source") == "llm":
+        return "check"
+    if issue["severity"] == "high" and issue["dimension"] in FIX_NOW_DIMENSIONS:
+        return "fix_now"
+    return "can_wait"

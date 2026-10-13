@@ -948,10 +948,13 @@ def _render_triage(conn, upload: dict) -> None:
     # v2 (after the usability study): what people see first. Every issue is
     # still stored and counted; see app.reports.grouping.
     unused = grouping.unused_rule_ids(repository.fetch_rules(conn, uid))
-    attention = grouping.needs_attention(issues, unused)
+    # what to do first: Fix now / Check with the business / Can wait (+ All issues)
+    by_action = {a: [i for i in issues if grouping.action_category(i, unused) == a] for a in grouping.ACTIONS}
+    views = [a for a in ("fix_now", "check", "can_wait") if by_action[a]] + ["all"]
     view = st.segmented_control(
-        "Show", ["attention", "all"], default="attention", key="triage_view", label_visibility="collapsed",
-        format_func=lambda v: f"Needs attention ({len(attention)})" if v == "attention" else f"All issues ({len(issues)})")
+        "Show", views, default=views[0], key="triage_action", label_visibility="collapsed",
+        format_func=lambda v: f"All issues ({len(issues)})" if v == "all"
+        else f"{grouping.ACTIONS[v]} ({len(by_action[v])})") or views[0]
     fields = grouping.unused_fields(issues, unused)
     if fields:
         n_fields = sum(len(c) for c in fields.values())
@@ -963,7 +966,7 @@ def _render_triage(conn, upload: dict) -> None:
                 names = ", ".join(display_columns(aliases, table, c) or c for c in cols)
                 st.markdown(f"**{html.escape(table)}**: {html.escape(names)}")
     if view != "all":
-        issues = attention
+        issues = by_action[view]
     types = Counter(grouping.type_label(i["dimension"]) for i in issues)
     if len(types) > 1:   # plain issue types, so the mix is visible at a glance
         pick = st.pills("Issue types", list(types), selection_mode="single", key=f"triage_type_{view}",

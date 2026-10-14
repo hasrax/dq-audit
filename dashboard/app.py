@@ -1024,15 +1024,16 @@ def _group_card(conn, item: dict, aliases: dict) -> None:
     cols = [(display_columns(aliases, item["table"], i["column_name"]) or "whole row").replace(", ", " & ")
             for i in item["issues"]]
     preview = ", ".join(cols[:4]) + (f" and {len(cols) - 4} more" if len(cols) > 4 else "")
-    meta = [item["severity"].title() + " (highest)", f"{len(item['issues'])} issues", "Found by rules"]
+    meta = [f"{len(item['issues'])} issues"]
     if item["rows"]:
-        meta.insert(2, f"{item['rows']:,} rows in total")
+        meta.append(f"{item['rows']:,} rows in total")
+    labels = _pill(item["severity"].title(), color) + _pill("Rule", ui.BLUE)
     key = hashlib.md5(item["key"].encode()).hexdigest()[:10]
     with st.container(key=f"grp_{key}"):
         st.markdown(
             f'''<div class="issue-row group-card" style="--sev:{color}">
   <div class="top"><span class="loc"><span class="dot" style="background:{color}"></span>{html.escape(item["table"])}
-  <span class="col">· {html.escape(item["title"])}</span></span></div>
+  <span class="col">· {html.escape(item["title"])}</span></span><span class="pills">{labels}</span></div>
   <div class="sum">{html.escape(preview)}</div>
   <div class="meta">{html.escape(" · ".join(meta))}</div>
 </div>''',
@@ -2254,16 +2255,17 @@ def _issue_row(conn, issue: dict, aliases: dict) -> None:
     rows = issue.get("affected_row_count")
     if rows is None:
         rows = (issue.get("row_reference") or {}).get("count")
-    meta = [issue["severity"].title(), issue["dimension"].replace("_", " ").capitalize()]
+    meta = [issue["dimension"].replace("_", " ").capitalize()]
     if rows is not None:
         meta.append(f"{rows:,} row{'s' if rows != 1 else ''}")
-    meta.append("Found by AI" if issue["source"] == "llm" else "Found by rules")
     if issue.get("trend_status") in ("worsening", "improving"):
         meta.append("getting worse" if issue["trend_status"] == "worsening" else "improving")
-    status = ""
+    # small labels on top: severity and who found it (plus the decision, once made)
+    status = (_pill(issue["severity"].title(), sev_color)
+              + _pill("AI" if issue["source"] == "llm" else "Rule", ui.LAVENDER if issue["source"] == "llm" else ui.BLUE))
     if issue["status"] != "flagged":
         label, color = ui.STATUS[issue["status"]]
-        status = _pill(label, color)
+        status += _pill(label, color)
     row = st.container(key=f"irow_{issue['id']}")   # phones: actions wrap under the text
     if _is_participant():
         text, decide_a, decide_r, open_b = row.columns([8.4, 0.75, 0.75, 1.1], vertical_alignment="center")

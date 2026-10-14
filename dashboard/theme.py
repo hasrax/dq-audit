@@ -265,6 +265,11 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 .st-key-study_panel .sidebar-section {{ font-size: .72rem; font-weight: 700; letter-spacing: .6px;
   text-transform: uppercase; color: var(--faint); margin: 0 0 2px 0; }}
 
+/* the multi-select bar stays in view while scrolling the issue list */
+.st-key-selection_bar_active {{ position: fixed; bottom: 22px; left: calc(50% + 150px); transform: translateX(-50%);
+  width: min(720px, 86vw); z-index: 999; background: var(--surface); box-shadow: 0 10px 30px {_rgba(TEXT, .18)}; }}
+@media (max-width: 900px) {{ .st-key-selection_bar_active {{ left: 50%; }} }}
+
 /* small screens (phones) */
 @media (max-width: 640px) {{
   [data-testid="stMainBlockContainer"] {{ padding-top: 3.6rem; }}   /* below the fixed logo bar */

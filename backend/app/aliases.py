@@ -9,6 +9,8 @@ headerless SeefaERP exports (Hemas/Ussawatte).
 """
 from __future__ import annotations
 
+import re
+
 import json
 from pathlib import Path
 
@@ -87,3 +89,18 @@ def display_columns(aliases: dict, table: str, column: str | None) -> str | None
     table_map = aliases.get(table, {})
     parts = [p.strip() for p in column.split(",")]
     return ", ".join(table_map.get(p, p) for p in parts)
+
+
+COL_IN_TABLE = re.compile(r"\b(col_\d+) in (\w+)")
+COL = re.compile(r"(?<!\()\bcol_\d+\b(?!\))")
+
+
+def named(text: str | None, table: str, aliases: dict[str, dict[str, str]]) -> str:
+    """Replace positional names (col_N) in issue text with the company's column names.
+    "col_1 in OtherTable" uses OtherTable's names; "Name (col_N)" is left alone."""
+    if not text:
+        return text or ""
+    text = COL_IN_TABLE.sub(lambda m: f"{aliases.get(m.group(2), {}).get(m.group(1), m.group(1))} in {m.group(2)}",
+                            text)
+    names = aliases.get(table, {})
+    return COL.sub(lambda m: names.get(m.group(0), m.group(0)), text)

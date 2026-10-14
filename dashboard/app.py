@@ -57,6 +57,7 @@ from app.chat import threads as chat_threads
 from app.reports.audit_report import build_markdown as standard_report_md
 from app.reports.render import to_docx, to_pdf
 from app.reports import grouping
+from app.aliases import named   # col_N in issue text -> the company's column names
 from app.eval import live as live_eval
 from app.auth import users as auth
 from app.llm import selection as llm_selection
@@ -1006,6 +1007,7 @@ def _render_triage(conn, upload: dict) -> None:
                                                             "rows": len(issues)}),
         )
         if not _is_participant():
+            _render_selection_bar(conn, issues)
             _render_bulk_actions(conn, [i["id"] for i in issues])
     else:
         st.info("No issues match these filters. Try setting **Status** to *All*, or show **All issues**.")
@@ -2152,6 +2154,39 @@ def _render_header(upload: dict, counts: dict, total: int, reviewed: int) -> Non
     )
 
 
+def _set_picks(issue_ids: list[int], value: bool) -> None:
+    for i in issue_ids:
+        st.session_state[f"pick_{i}"] = value
+
+
+def _decide_picked(conn, issue_ids: list[int], status: str) -> None:
+    repository.set_issue_statuses(conn, issue_ids, status, reviewed_by=_username())
+    _set_picks(issue_ids, False)
+    st.session_state["flash"] = f"{len(issue_ids)} issue(s) marked {ui.STATUS[status][0].lower()}"
+
+
+def _render_selection_bar(conn, issues: list[dict]) -> None:
+    """Tick several issues (after checking them), then decide them in one go."""
+    shown = [i["id"] for i in issues]
+    picked = [i for i in shown if st.session_state.get(f"pick_{i}")]
+    # once something is ticked, the bar floats at the bottom of the screen (stays in reach while scrolling)
+    with st.container(border=True, key="selection_bar_active" if picked else "selection_bar"):
+        if picked:
+            label, acc, rej, uns, clear = st.columns([2.2, 1, 1, 1, 1], vertical_alignment="center")
+            label.markdown(f"**{len(picked)} selected**")
+            acc.button("Accept", key="sel_acc", icon=":material/check:", type="primary", width="stretch",
+                       on_click=_decide_picked, args=(conn, picked, "accepted"))
+            rej.button("Reject", key="sel_rej", icon=":material/close:", width="stretch",
+                       on_click=_decide_picked, args=(conn, picked, "rejected"))
+            uns.button("Unsure", key="sel_uns", icon=":material/help:", width="stretch",
+                       on_click=_decide_picked, args=(conn, picked, "considered"))
+            clear.button("Clear", key="sel_clear", width="stretch", on_click=_set_picks, args=(picked, False))
+        else:
+            text, all_b = st.columns([4, 1.2], vertical_alignment="center")
+            text.caption("Tick the issues you have checked, then accept, reject or mark them unsure together.")
+            all_b.button("Select all shown", key="sel_all", width="stretch", on_click=_set_picks, args=(shown, True))
+
+
 def _render_bulk_actions(conn, issue_ids: list[int]) -> None:
     with st.expander(f"⚡ Bulk actions — apply to all {len(issue_ids)} shown"):
         cols = st.columns(4)
@@ -2224,12 +2259,17 @@ def _issue_row(conn, issue: dict, aliases: dict) -> None:
         label, color = ui.STATUS[issue["status"]]
         status = _pill(label, color)
     row = st.container(key=f"irow_{issue['id']}")   # phones: actions wrap under the text
-    text, decide_a, decide_r, open_b = row.columns([8.4, 0.75, 0.75, 1.1], vertical_alignment="center")
+    if _is_participant():
+        text, decide_a, decide_r, open_b = row.columns([8.4, 0.75, 0.75, 1.1], vertical_alignment="center")
+    else:   # staff can tick several issues and decide them together
+        pick, text, decide_a, decide_r, open_b = row.columns([0.32, 8.1, 0.75, 0.75, 1.1],
+                                                             vertical_alignment="center")
+        pick.checkbox("Select", key=f"pick_{issue['id']}", label_visibility="collapsed")
     text.markdown(
         f'''<div class="issue-row" style="--sev:{sev_color}">
   <div class="top"><span class="loc"><span class="dot" style="background:{sev_color}"></span>{_location_html(issue, aliases)}</span>
   <span class="pills">{status}</span></div>
-  <div class="sum">{html.escape(issue["description"] or "")}</div>
+  <div class="sum">{html.escape(named(issue["description"], issue["table_name"], aliases))}</div>
   <div class="meta">{html.escape(" · ".join(meta))}</div>
 </div>''',
         unsafe_allow_html=True,
@@ -2264,8 +2304,8 @@ def _issue_dialog(conn, issue_id: int) -> None:
   <div class="issue-meta">{html.escape(issue["dimension"].replace("_", " ").capitalize())} · issue #{issue["id"]}
    · audit #{issue["upload_id"]} (data as of {issue["as_of"]:%d %b %Y}){" · " + fix if fix else ""}</div>
   <div class="section-label">What was found</div>
-  <div class="issue-desc">{html.escape(issue["description"] or "")}</div>
-  {f'<div class="section-label">What to do</div><div class="issue-rec">{html.escape(issue["recommendation"])}</div>'
+  <div class="issue-desc">{html.escape(named(issue["description"], issue["table_name"], aliases))}</div>
+  {f'<div class="section-label">What to do</div><div class="issue-rec">{html.escape(named(issue["recommendation"], issue["table_name"], aliases))}</div>'
    if issue.get("recommendation") else ""}
   {_trend_html(issue, recurrence.issue_history(conn, issue_id),
                recurrence.projections_for_upload(conn, issue["upload_id"]).get(issue_id))}

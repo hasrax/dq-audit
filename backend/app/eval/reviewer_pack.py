@@ -63,21 +63,7 @@ WRAP = Alignment(wrap_text=True, vertical="top")
 BOLD = Font(bold=True)
 
 
-# --- readable names (pure, tested) ---------------------------------------------
-
-COL_IN_TABLE = re.compile(r"\b(col_\d+) in (\w+)")
-COL = re.compile(r"(?<!\()\bcol_\d+\b(?!\))")
-
-
-def named(text: str | None, table: str, aliases: dict[str, dict[str, str]]) -> str:
-    """Replace positional names (col_N) in issue text with the company's column names.
-    "col_1 in OtherTable" uses OtherTable's names; "Name (col_N)" is left alone."""
-    if not text:
-        return text or ""
-    text = COL_IN_TABLE.sub(lambda m: f"{aliases.get(m.group(2), {}).get(m.group(1), m.group(1))} in {m.group(2)}",
-                            text)
-    names = aliases.get(table, {})
-    return COL.sub(lambda m: names.get(m.group(0), m.group(0)), text)
+from app.aliases import named  # noqa: E402,F401  (re-exported for callers and tests)
 
 
 # --- sampling helpers (pure, tested) -------------------------------------------

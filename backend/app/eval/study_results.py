@@ -78,8 +78,9 @@ def _num(value) -> float | None:
 
 
 def parse_sus(path: Path) -> tuple[pd.DataFrame, list[str]]:
-    """Read the Google Form CSV, matching columns by prefix (Q1.-Q10., C1.-C5.)."""
-    raw = pd.read_csv(path, dtype=str, keep_default_na=False)
+    """Read the Google Form responses (CSV or Excel), matching columns by prefix (Q1.-Q10., C1.-C5.)."""
+    raw = (pd.read_excel(path, dtype=str).fillna("") if Path(path).suffix.lower() in (".xlsx", ".xls")
+           else pd.read_csv(path, dtype=str, keep_default_na=False))   # Forms CSV or Sheets download
     cols = {c: c for c in raw.columns}
     q = {int(m.group(1)): c for c in cols if (m := re.match(r"^\s*Q(\d+)\.", c))}
     cl = {int(m.group(1)): c for c in cols if (m := re.match(r"^\s*C(\d+)\.", c))}

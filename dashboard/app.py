@@ -1039,6 +1039,10 @@ def _group_card(conn, item: dict, aliases: dict) -> None:
             unsafe_allow_html=True,
         )
         with st.expander(f"Show the {len(item['issues'])} issues"):
+            if not _is_participant():
+                ids = [i["id"] for i in item["issues"]]
+                st.button(f"Select all {len(ids)} in this group", key=f"selgrp_{key}", icon=":material/done_all:",
+                          on_click=_set_picks, args=(ids, True))
             for issue in item["issues"]:
                 _issue_row(conn, issue, aliases)
 
@@ -2172,8 +2176,10 @@ def _render_selection_bar(conn, issues: list[dict]) -> None:
     # once something is ticked, the bar floats at the bottom of the screen (stays in reach while scrolling)
     with st.container(border=True, key="selection_bar_active" if picked else "selection_bar"):
         if picked:
-            label, acc, rej, uns, clear = st.columns([2.2, 1, 1, 1, 1], vertical_alignment="center")
-            label.markdown(f"**{len(picked)} selected**")
+            label, all_b, acc, rej, uns, clear = st.columns([1.6, 1.3, 1, 1, 1, 0.9], vertical_alignment="center")
+            label.markdown(f"**{len(picked)} of {len(shown)} selected**")
+            all_b.button(f"Select all {len(shown)}", key="sel_all_active", width="stretch",
+                         disabled=len(picked) == len(shown), on_click=_set_picks, args=(shown, True))
             acc.button("Accept", key="sel_acc", icon=":material/check:", type="primary", width="stretch",
                        on_click=_decide_picked, args=(conn, picked, "accepted"))
             rej.button("Reject", key="sel_rej", icon=":material/close:", width="stretch",

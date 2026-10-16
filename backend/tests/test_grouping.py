@@ -50,3 +50,19 @@ def test_action_categories():
     assert grouping.action_category(_i(3, "T", "completeness_null_pct", ref=9), unused) == "not_used"
     assert grouping.action_category(_i(4, "T", None, source="llm"), unused) == "check"
     assert grouping.action_category(_i(5, "T", "validity_negative_value", sev="medium"), unused) == "can_wait"
+
+
+def test_mostly_blank_fields_go_to_check():
+    rules = [{"id": n, "template": "completeness_null_pct", "evidence": {"null_pct": pct}}
+             for n, pct in ((1, 100.0), (2, 99.9), (3, 75.0), (4, 50.0), (5, 49.9))]
+    assert grouping.unused_rule_ids(rules) == {1, 2}
+    blank = grouping.mostly_blank_rule_ids(rules)
+    assert blank == {3, 4}
+    assert grouping.action_category(_i(1, "T", "completeness_null_pct", ref=3), set(), blank) == "check"
+    assert grouping.action_category(_i(2, "T", "completeness_null_pct", ref=5), set(), blank) == "can_wait"
+
+
+def test_value_order_findings_are_marked():
+    assert grouping.is_value_order(_i(1, "T", "consistency_ordering_violation"))
+    assert not grouping.is_value_order(_i(2, "T", "cross_table_fk_orphan"))
+    assert not grouping.is_value_order(_i(3, "T", "consistency_ordering_violation", source="llm"))

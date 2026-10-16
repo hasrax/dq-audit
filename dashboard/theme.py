@@ -51,10 +51,9 @@ def apply(mode: str | None) -> str:
     SEVERITY.clear()
     SEVERITY.update({"high": CORAL, "medium": MUSTARD, "low": MUTED})
     SOURCE.clear()
-    SOURCE.update({"rule": ("Rule · Type 1", BLUE), "llm": ("AI · Type 2", LAVENDER)})
-    TREND.clear()
-    TREND.update({"new": ("NEW", BLUE), "worsening": ("▲ WORSENING", CORAL),
-                  "improving": ("▼ IMPROVING", SAGE), "stable": ("■ STABLE", MUTED)})
+    SOURCE.update({"rule": ("Rule", BLUE), "llm": ("AI", LAVENDER)})   # Type 1 / 2 are thesis terms
+    TREND.clear()   # only trends that need attention get a badge (a stable one on every card is noise)
+    TREND.update({"new": ("New", BLUE), "worsening": ("▲ Getting worse", CORAL)})
     STATUS.clear()
     STATUS.update({"flagged": ("To review", MUTED), "accepted": ("Accepted", SAGE),
                    "rejected": ("Rejected", CORAL), "considered": ("Considered", MUSTARD)})
@@ -209,6 +208,7 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 .issue-row .meta {{ margin-top: 3px; color: var(--faint); font-size: .8rem; }}
 .section-label {{ font-size: .78rem; text-transform: uppercase; letter-spacing: .5px; color: var(--faint);
   margin: 14px 0 4px 0; font-weight: 650; }}
+.decision-gap {{ height: 12px; }}   /* issue dialog: Accept / Reject / Unsure line up with the note box */
 
 .rule-card {{ background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent, {SAGE});
   border-radius: 14px; padding: 12px 16px 10px 16px; margin: 0 0 4px 0; }}

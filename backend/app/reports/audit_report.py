@@ -17,6 +17,7 @@ from app.db import repository
 from app.eval.triage_metrics import compute_triage_metrics
 from app.monitoring import recurrence
 from app.reports import grouping
+from app.reports.wording import DATE_FORMAT, show
 from app.schema_docs.store import display_aliases
 from app.workspaces import refresh_names
 
@@ -55,6 +56,7 @@ def build_markdown(conn, upload: dict) -> str:
     tables = [r[0] for r in conn.execute(
         "SELECT DISTINCT table_name FROM profiles WHERE upload_id = %s ORDER BY 1", (uid,)).fetchall()]
     unused = grouping.unused_rule_ids(rules)
+    mostly_blank = grouping.mostly_blank_rule_ids(rules)
     fields = grouping.unused_fields(issues, unused)
     open_issues = [i for i in issues if i["status"] != "rejected"]
     attention = grouping.needs_attention(open_issues, unused)
@@ -66,9 +68,9 @@ def build_markdown(conn, upload: dict) -> str:
     md = [
         "# Data quality audit report",
         f"**Organisation:** {client_label(client)}",
-        f"**Audit reference:** #{uid}  ·  **Data as of:** {as_of:%d %B %Y}  ·  **Rows audited:** "
+        f"**Audit reference:** #{uid}  ·  **Data as of:** {as_of:{DATE_FORMAT}}  ·  **Rows audited:** "
         f"{upload['row_count']:,}  ·  **Tables audited:** {len(tables)}",
-        f"**Prepared:** {datetime.now():%d %B %Y}  ·  **Prepared with:** ClarityDQ (automated audit, "
+        f"**Prepared:** {datetime.now():{DATE_FORMAT}}  ·  **Prepared with:** ClarityDQ (automated audit, "
         "reviewed by people)",
 
         "## 1. Executive summary",
@@ -88,7 +90,7 @@ def build_markdown(conn, upload: dict) -> str:
     md += [
         "## 2. Scope",
         f"- **Tables audited ({len(tables)}):** {', '.join(tables)}.",
-        f"- **Rows audited:** {upload['row_count']:,}, data as of {as_of:%d %B %Y}.",
+        f"- **Rows audited:** {upload['row_count']:,}, data as of {as_of:{DATE_FORMAT}}.",
         "- **Not in scope:** fixing the data; this report identifies and explains problems.",
 
         "## 3. Method",
@@ -118,11 +120,11 @@ def build_markdown(conn, upload: dict) -> str:
     md.append("\n".join(rows))
 
     md.append("### 4.3 What to do first")
-    acts = [grouping.action_category(i, unused) for i in open_issues]
+    acts = [grouping.action_category(i, unused, mostly_blank) for i in open_issues]
     rows = ["| Action | Issues | Meaning |", "|---|---|---|",
             f"| Fix now | {acts.count('fix_now')} | High-severity problems with links, consistency, duplicates "
             "or wrong values |",
-            f"| Check with the business | {acts.count('check')} | AI findings that need a person's judgement |",
+            f"| Check with the business | {acts.count('check')} | AI findings and mostly blank fields that need a person's judgement |",
             f"| Can wait | {acts.count('can_wait')} | Lower-priority problems, mostly missing values |",
             f"| Not in use | {acts.count('not_used')} | Fields never filled in (Appendix B) |"]
     md.append("\n".join(rows))
@@ -138,7 +140,7 @@ def build_markdown(conn, upload: dict) -> str:
             md += [f"### 5.{n} {item['table']} - {item['title']}",
                    f"**{item['severity'].title()} severity - {len(item['issues'])} issues - found by rules**",
                    f"**Columns:** {', '.join(cols)}.",
-                   f"**What to do:** {item['issues'][0].get('recommendation') or ''}"]
+                   f"**What to do:** {show(item['issues'][0].get('recommendation'), item['table'], aliases)}"]
             continue
         i = item["issue"]
         facts = [f"{i['severity'].title()} severity", i["dimension"].replace("_", " "),
@@ -146,9 +148,9 @@ def build_markdown(conn, upload: dict) -> str:
         if i.get("affected_row_count"):
             facts.append(f"{i['affected_row_count']:,} rows")
         md += [f"### 5.{n} {_where(i, aliases)}", f"**{' - '.join(facts)}**",
-               f"**What was found:** {i.get('description') or ''}"]
+               f"**What was found:** {show(i.get('description'), i['table_name'], aliases)}"]
         if i.get("recommendation"):
-            md.append(f"**What to do:** {i['recommendation']}")
+            md.append(f"**What to do:** {show(i['recommendation'], i['table_name'], aliases)}")
         if i.get("user_note"):
             md.append(f"**Reviewer note:** {i['user_note']}")
 

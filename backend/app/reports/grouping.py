@@ -30,15 +30,37 @@ GROUP_TITLES = {
 }
 
 
-def unused_rule_ids(rules: list[dict]) -> set[int]:
-    """Ids of completeness rules whose column is empty in (almost) every row."""
+def _null_pct_rule_ids(rules: list[dict], low: float, high: float = 101.0) -> set[int]:
     out = set()
     for r in rules:
         if r.get("template") == "completeness_null_pct":
             pct = (r.get("evidence") or {}).get("null_pct")
-            if pct is not None and float(pct) >= UNUSED_NULL_PCT:
+            if pct is not None and low <= float(pct) < high:
                 out.add(r["id"])
     return out
+
+
+def unused_rule_ids(rules: list[dict]) -> set[int]:
+    """Ids of completeness rules whose column is empty in (almost) every row."""
+    return _null_pct_rule_ids(rules, UNUSED_NULL_PCT)
+
+
+MOSTLY_BLANK_NULL_PCT = 50.0   # blank in at least half the rows (but still used)
+
+
+def mostly_blank_rule_ids(rules: list[dict]) -> set[int]:
+    """Ids of completeness rules whose column is blank in most rows but not all:
+    whether that field matters is a business question."""
+    return _null_pct_rule_ids(rules, MOSTLY_BLANK_NULL_PCT, UNUSED_NULL_PCT)
+
+
+ORDERING_RULE = "consistency_ordering_violation"
+
+
+def is_value_order(issue: dict) -> bool:
+    """'Unusual value order' findings (mined orderings between two columns). Often
+    coincidental on named columns, so the UI folds them into one section."""
+    return issue.get("source") == "rule" and issue.get("rule_id") == ORDERING_RULE
 
 
 def is_unused(issue: dict, unused: set[int]) -> bool:
@@ -137,13 +159,14 @@ ACTIONS = {
 FIX_NOW_DIMENSIONS = {"cross_table", "consistency", "uniqueness", "validity", "accuracy"}
 
 
-def action_category(issue: dict, unused: set[int]) -> str:
+def action_category(issue: dict, unused: set[int], mostly_blank: set[int] = frozenset()) -> str:
     """Fix now = high-severity rule findings on links, consistency, duplicates or
-    wrong values; Check = AI findings (need a person's judgement of the business
-    context); Not in use = fields never filled in; everything else can wait."""
+    wrong values; Check = AI findings and mostly-blank fields (need a person's
+    judgement of the business context); Not in use = fields never filled in;
+    everything else can wait."""
     if is_unused(issue, unused):
         return "not_used"
-    if issue.get("source") == "llm":
+    if issue.get("source") == "llm" or (issue.get("source") == "rule" and issue.get("rule_ref") in mostly_blank):
         return "check"
     if issue["severity"] == "high" and issue["dimension"] in FIX_NOW_DIMENSIONS:
         return "fix_now"

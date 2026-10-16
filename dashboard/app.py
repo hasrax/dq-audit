@@ -58,6 +58,7 @@ from app.reports.audit_report import build_markdown as standard_report_md
 from app.reports.render import to_docx, to_pdf
 from app.reports import grouping
 from app.aliases import named   # col_N in issue text -> the company's column names
+from app.reports.wording import DATE_FORMAT, plain, show   # stored issue / rule text -> plain English
 from app.eval import live as live_eval
 from app.auth import users as auth
 from app.llm import selection as llm_selection
@@ -76,13 +77,13 @@ ABOUT_MD = f"""
 exports. It reads CSV/Excel files (no database access) and flags issues in
 plain language.
 
-**Two-error taxonomy — how issues are found:**
-- ⚙️ **Rules (Type 1)** — deterministic checks over *every row*:
-  completeness, validity, consistency, uniqueness, timeliness, and
-  cross-table referential integrity.
-- 🤖 **LLM (Type 2)** — an AI auditor on a small *pseudonymized* sample
-  catches *contextual* problems rules can't express (implausible discounts,
-  ×100 quantities, price outliers, near-duplicates).
+**How issues are found:**
+- ⚙️ **Rules** — fixed checks over *every row*: missing values, wrong
+  values, inconsistent values, duplicates, date problems and broken links
+  between tables.
+- 🤖 **AI** — an AI auditor looks at statistics and a small, privacy-masked
+  sample to catch problems in context that rules can't express (unlikely
+  discounts, quantities 100 times too large, price outliers, near-duplicates).
 
 The two are **complementary**, not redundant — see the complementarity
 figure on the Scores tab.
@@ -957,9 +958,11 @@ def _render_triage(conn, upload: dict) -> None:
     aliases = _aliases(conn, upload["source_client"])
     # v2 (after the usability study): what people see first. Every issue is
     # still stored and counted; see app.reports.grouping.
-    unused = grouping.unused_rule_ids(repository.fetch_rules(conn, uid))
+    rules = repository.fetch_rules(conn, uid)
+    unused, mostly_blank = grouping.unused_rule_ids(rules), grouping.mostly_blank_rule_ids(rules)
     # what to do first: Fix now / Check with the business / Can wait (+ All issues)
-    by_action = {a: [i for i in issues if grouping.action_category(i, unused) == a] for a in grouping.ACTIONS}
+    by_action = {a: [i for i in issues if grouping.action_category(i, unused, mostly_blank) == a]
+                 for a in grouping.ACTIONS}
     views = [a for a in ("fix_now", "check", "can_wait") if by_action[a]] + ["all"]
     view = st.segmented_control(
         "Show", views, default=views[0], key="triage_action", label_visibility="collapsed",
@@ -1012,11 +1015,24 @@ def _render_triage(conn, upload: dict) -> None:
             _render_bulk_actions(conn, [i["id"] for i in issues])
     else:
         st.info("No issues match these filters. Try setting **Status** to *All*, or show **All issues**.")
-    for item in grouping.by_priority(grouping.group(issues)):     # most important first
-        if item["kind"] == "issue":
-            _issue_row(conn, item["issue"], aliases)
-        else:
-            _group_card(conn, item, aliases)
+    # mined value-order checks are often coincidental: one folded section at the bottom
+    order = [i for i in issues if grouping.is_value_order(i)]
+    for item in grouping.by_priority(grouping.group([i for i in issues if not grouping.is_value_order(i)])):
+        _render_triage_item(conn, item, aliases)      # most important first
+    if order:
+        with st.expander(f"Unusual value order ({len(order)})", icon=":material/swap_vert:"):
+            st.caption("One value is normally not larger than another in the same row (for example a discount "
+                       "and a total), but some rows break that pattern. Many of these patterns are coincidence, "
+                       "so check them last.")
+            for issue in sorted(order, key=grouping.priority, reverse=True):   # no group cards: no nested expanders
+                _issue_row(conn, issue, aliases)
+
+
+def _render_triage_item(conn, item: dict, aliases: dict) -> None:
+    if item["kind"] == "issue":
+        _issue_row(conn, item["issue"], aliases)
+    else:
+        _group_card(conn, item, aliases)
 
 
 def _group_card(conn, item: dict, aliases: dict) -> None:
@@ -1141,7 +1157,8 @@ def _evidence_text(rule: dict) -> str:
     for key, value in ev.items():
         if key in EVIDENCE_HIDDEN or value is None:
             continue
-        shown = f"{value:,}" if isinstance(value, int) and not isinstance(value, bool) else value
+        shown = (f"{value:,}" if isinstance(value, int) and not isinstance(value, bool)
+                 else f"{value:,.1f}".removesuffix(".0") if isinstance(value, float) else value)
         bits.append(f"{EVIDENCE_LABEL.get(key, key.replace('_', ' '))}: {shown}")
     return "Evidence — " + " · ".join(bits) if bits else "Evidence — none recorded"
 
@@ -1505,6 +1522,7 @@ def _render_rules(conn, upload: dict) -> None:
     ]
     st.caption(f"Showing {len(rules)} of {len(all_rules)} rules")
     client = base_client(upload["source_client"])
+    aliases = _aliases(conn, upload["source_client"])
     suppressed = repository.active_suppressions(conn, client)
     admin = _is_admin()
     for r in rules:
@@ -1522,9 +1540,9 @@ def _render_rules(conn, upload: dict) -> None:
             f'''<div class="rule-card" style="--accent:{accent}">
   <div class="issue-head"><span class="pills">{_outline_pill(CATEGORY_LABEL.get(r["category"], r["category"]))}{_outline_pill(r["table_name"])}</span>
   <span class="pills">{badge}</span></div>
-  <div class="rule-what">{html.escape(r["what_text"])}</div>
-  <div class="rule-why">{html.escape(r["why_text"])}</div>
-  <div class="rule-ev">{html.escape(_evidence_text(r))}</div>
+  <div class="rule-what">{html.escape(show(r["what_text"], r["table_name"], aliases))}</div>
+  <div class="rule-why">{html.escape(show(r["why_text"], r["table_name"], aliases))}</div>
+  <div class="rule-ev">{html.escape(plain(_evidence_text(r)))}</div>
 </div>''',
             unsafe_allow_html=True,
         )
@@ -1986,7 +2004,7 @@ def _render_upload(conn, in_dialog: bool = False) -> None:
                                  key=f"imp_new_{in_dialog}").strip()
 
     c1, c2 = st.columns([1, 2])
-    as_of = c1.date_input("Data as of", value=_dt.date.today(), key=f"imp_asof_{in_dialog}",
+    as_of = c1.date_input("Data as of", value=_dt.date.today(), key=f"imp_asof_{in_dialog}", format="DD/MM/YYYY",
                           help="The date the export was taken. Imports are ordered by this date for trends.")
     files = c2.file_uploader("Export files", type=["csv", "xlsx", "xls"], accept_multiple_files=True,
                              key=f"imp_files_{in_dialog}")
@@ -2331,7 +2349,7 @@ def _issue_row(conn, issue: dict, aliases: dict) -> None:
         f'''<div class="issue-row" style="--sev:{sev_color}">
   <div class="top"><span class="loc"><span class="dot" style="background:{sev_color}"></span>{_location_html(issue, aliases)}</span>
   <span class="pills">{status}</span></div>
-  <div class="sum">{html.escape(named(issue["description"], issue["table_name"], aliases))}</div>
+  <div class="sum">{html.escape(show(issue["description"], issue["table_name"], aliases))}</div>
   <div class="meta">{html.escape(" · ".join(meta))}</div>
 </div>''',
         unsafe_allow_html=True,
@@ -2359,15 +2377,15 @@ def _issue_dialog(conn, issue_id: int) -> None:
     sev_color = SEVERITY_COLOR.get(issue["severity"], ui.MUTED)
     fix = ("Fixable from the data itself" if issue.get("fixable") == "yes"
            else "Needs a business decision to fix" if issue.get("fixable") == "no" else "")
+    # summary first (what / what to do); the technical detail is folded away below
     st.markdown(
         f'''<div class="issue-card" style="--sev:{sev_color}">
   <div class="issue-head"><span class="issue-title">{_location_html(issue, aliases)}</span>
   <span class="pills">{_issue_pills(issue)}</span></div>
-  <div class="issue-meta">{html.escape(issue["dimension"].replace("_", " ").capitalize())} · issue #{issue["id"]}
-   · audit #{issue["upload_id"]} (data as of {issue["as_of"]:%d %b %Y}){" · " + fix if fix else ""}</div>
+  <div class="issue-meta">{html.escape(grouping.type_label(issue["dimension"]))}{" · " + fix if fix else ""}</div>
   <div class="section-label">What was found</div>
-  <div class="issue-desc">{html.escape(named(issue["description"], issue["table_name"], aliases))}</div>
-  {f'<div class="section-label">What to do</div><div class="issue-rec">{html.escape(named(issue["recommendation"], issue["table_name"], aliases))}</div>'
+  <div class="issue-desc">{html.escape(show(issue["description"], issue["table_name"], aliases))}</div>
+  {f'<div class="section-label">What to do</div><div class="issue-rec">{html.escape(show(issue["recommendation"], issue["table_name"], aliases))}</div>'
    if issue.get("recommendation") else ""}
   {_trend_html(issue, recurrence.issue_history(conn, issue_id),
                recurrence.projections_for_upload(conn, issue["upload_id"]).get(issue_id))}
@@ -2375,13 +2393,12 @@ def _issue_dialog(conn, issue_id: int) -> None:
         unsafe_allow_html=True,
     )
 
-    why, rows_tab = st.tabs(["Why this was flagged", "Affected rows"])
-    with why:
+    with st.expander("Why this was flagged", icon=":material/rule:"):
         rule = repository.fetch_rule(conn, issue["rule_ref"]) if issue.get("rule_ref") else None
         if rule:
-            st.markdown(f"**{rule['what_text']}**")
-            st.markdown(rule["why_text"])
-            st.caption(_evidence_text(rule) + " · rule created automatically from the data profile")
+            st.markdown(f"**{show(rule['what_text'], issue['table_name'], aliases)}**")
+            st.markdown(show(rule["why_text"], issue["table_name"], aliases))
+            st.caption(plain(_evidence_text(rule)) + " · rule created automatically from the data profile")
         elif issue["source"] == "llm":
             st.markdown("Found by the **AI auditor**, which looked at the table's statistics and a small, "
                         "privacy-masked sample of rows for problems fixed rules can't express "
@@ -2390,7 +2407,9 @@ def _issue_dialog(conn, issue_id: int) -> None:
                        "and rejected findings teach the AI what not to report for this company.")
         else:
             st.caption("No rule details were recorded for this issue.")
-    with rows_tab:
+        st.caption(f"{issue['dimension'].replace('_', ' ').capitalize()} · issue #{issue['id']} · audit "
+                   f"#{issue['upload_id']} (data as of {issue['as_of']:{DATE_FORMAT}})")
+    with st.expander("Affected rows", icon=":material/table_rows:"):
         ref = issue.get("row_reference") or {}
         samples = ref.get("samples")
         if samples:
@@ -2407,27 +2426,30 @@ def _issue_dialog(conn, issue_id: int) -> None:
             st.caption("No example rows were recorded for this issue.")
 
     st.markdown('<div class="section-label">Your decision</div>', unsafe_allow_html=True)
-    note = st.text_area("Note (optional)", value=issue.get("user_note") or "", key=f"dlg_note_{issue_id}",
-                        placeholder="e.g. Known promotion — discounts above 50% are allowed in December.",
-                        height=70)
-    b = st.columns([1, 1, 1, 1.5])
-    choices = [("Accept", "accepted", ":material/check:", "primary"), ("Reject", "rejected", ":material/close:", "secondary"),
-               ("Unsure", "considered", ":material/help:", "secondary")]
-    for col, (label, status, icon, kind) in zip(b, choices):
-        if col.button(label, key=f"dlg_{status}_{issue_id}", icon=icon, type=kind, width="stretch"):
-            if _is_participant():
-                sp.save_decision(conn, _username(), issue_id, status, note)
-            else:
-                repository.update_issue_status(conn, issue_id, status, note.strip() or None, reviewed_by=_username())
-            st.session_state["flash"] = f"Issue #{issue_id} marked {ui.STATUS[status][0].lower()}"
-            st.rerun()
-    if b[3].button("Discuss in chat", key=f"dlg_chat_{issue_id}", icon=":material/forum:", width="stretch"):
-        _open_issue_thread(conn, issue, aliases)
-        st.switch_page(st.session_state["_pages"]["ask"])
+    # the three answers look the same, so the layout does not nudge reviewers towards one (precision)
+    note_col, btn_col = st.columns([2.2, 1], vertical_alignment="top")
+    note = note_col.text_area("Why do you think so? (optional)", value=issue.get("user_note") or "",
+                              key=f"dlg_note_{issue_id}", height=118)
+    choices = [("Accept", "accepted", ":material/check:"), ("Reject", "rejected", ":material/close:"),
+               ("Unsure", "considered", ":material/help:")]
+    with btn_col:
+        st.markdown('<div class="decision-gap"></div>', unsafe_allow_html=True)   # align with the note box
+        for label, status, icon in choices:
+            if st.button(label, key=f"dlg_{status}_{issue_id}", icon=icon, type="secondary", width="stretch"):
+                if _is_participant():
+                    sp.save_decision(conn, _username(), issue_id, status, note)
+                else:
+                    repository.update_issue_status(conn, issue_id, status, note.strip() or None,
+                                                   reviewed_by=_username())
+                st.session_state["flash"] = f"Issue #{issue_id} marked {ui.STATUS[status][0].lower()}"
+                st.rerun()
     if issue["status"] != "flagged":
         st.caption(f"Currently **{ui.STATUS[issue['status']][0].lower()}**"
                    + (f" by {issue['reviewed_by']}" if issue.get("reviewed_by") else "")
-                   + (f" on {issue['reviewed_at']:%d %b %Y %H:%M}" if issue.get("reviewed_at") else "") + ".")
+                   + (f" on {issue['reviewed_at']:{DATE_FORMAT} %H:%M}" if issue.get("reviewed_at") else "") + ".")
+    if st.button("Discuss in chat", key=f"dlg_chat_{issue_id}", icon=":material/forum:", type="tertiary"):
+        _open_issue_thread(conn, issue, aliases)
+        st.switch_page(st.session_state["_pages"]["ask"])
 
 
 def _decide(conn, issue_id: int, status: str) -> None:

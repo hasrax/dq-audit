@@ -30,6 +30,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from app.aliases import base_client, client_label
+from app.reports.wording import show
 from app.db import repository
 from app.config import load_settings
 from app.llm.client import LLMClient
@@ -116,8 +117,8 @@ def _issue_detail(conn: psycopg.Connection, issue: dict, aliases: dict) -> str:
     lines = [
         f"SELECTED ISSUE #{issue['id']}:",
         _issue_line(issue, aliases),
-        f"What was found: {issue.get('description') or ''}",
-        f"Recommendation: {issue.get('recommendation') or ''}",
+        f"What was found: {show(issue.get('description'), issue['table_name'], aliases)}",
+        f"Recommendation: {show(issue.get('recommendation'), issue['table_name'], aliases)}",
         f"Fixable: {issue.get('fixable') or 'unknown'}",
     ]
     if issue.get("user_note"):
@@ -125,7 +126,8 @@ def _issue_detail(conn: psycopg.Connection, issue: dict, aliases: dict) -> str:
     if issue.get("rule_ref"):
         rule = repository.fetch_rule(conn, issue["rule_ref"])
         if rule:
-            lines += [f"Rule — what it checks: {rule['what_text']}", f"Rule — why it exists: {rule['why_text']}"]
+            lines += [f"Rule — what it checks: {show(rule['what_text'], issue['table_name'], aliases)}",
+                      f"Rule — why it exists: {show(rule['why_text'], issue['table_name'], aliases)}"]
     lines += _example_rows(conn, issue, aliases)
     return "\n".join(lines)
 

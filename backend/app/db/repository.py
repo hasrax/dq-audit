@@ -267,6 +267,15 @@ def update_issue_status(
         (status, user_note, status, status, reviewed_by, issue_id),
     )
     conn.commit()
+    _rescore_for([issue_id], conn)
+
+
+def _rescore_for(issue_ids: list[int], conn: psycopg.Connection) -> None:
+    """Rejected issues do not count towards the DQ score, so a decision
+    changes it: re-store the score now, so every page shows the same value."""
+    uploads = conn.execute("SELECT DISTINCT upload_id FROM issues WHERE id = ANY(%s)", (issue_ids,)).fetchall()
+    for (upload_id,) in uploads:
+        score_upload(conn, upload_id)
 
 
 def set_issue_statuses(conn: psycopg.Connection, issue_ids: list[int], status: str,
@@ -285,6 +294,7 @@ def set_issue_statuses(conn: psycopg.Connection, issue_ids: list[int], status: s
         (status, status, status, reviewed_by, ids),
     )
     conn.commit()
+    _rescore_for(ids, conn)
     return len(ids)
 
 

@@ -1,4 +1,4 @@
-"""End-to-end injection evaluation (E1 + E2) on a real Hemas extract.
+"""End-to-end injection evaluation (E1 + E2) on a real Company A extract.
 
 Builds a cleaned baseline from real GRNHED (parent) + GRNDtl (child),
 injects seeded errors across all six dimensions and the Type 2 classes,
@@ -31,7 +31,7 @@ from app.rules.engine import run_rules
 
 DEFAULT_SEED = 20260722
 EXTRACT_ROWS = 300
-HEMAS_DIR = Path(__file__).resolve().parents[3] / "data" / "hemas"
+COMPANY_A_DIR = Path(__file__).resolve().parents[3] / "data" / "hemas"
 
 # Column roles in GRNHED (positional, from Layer 0 profiling).
 # col_1 is deliberately left CLEAN: it is the parent key GRNDtl references,
@@ -54,17 +54,17 @@ INJECTION_PLAN = [
 ]
 
 
-def build_scenario(hemas_dir: Path, seed: int):
+def build_scenario(data_dir: Path, seed: int):
     rng = np.random.default_rng(seed)
 
-    parent = baseline.subset(load_csv(hemas_dir / "GRNHED.csv"), EXTRACT_ROWS, rng)
+    parent = baseline.subset(load_csv(data_dir / "GRNHED.csv"), EXTRACT_ROWS, rng)
     baseline.make_all_non_null(parent)
     baseline.make_non_negative(parent, GRNHED_DECIMAL_COLS)
     baseline.clamp_dates(parent, GRNHED_TIMELINESS_CLEAN_COLS)
     baseline.order_dates(parent, "col_3", "col_4")
 
     parent_keys = set(parent["col_1"])
-    child_pool = load_csv(hemas_dir / "GRNDtl.csv")
+    child_pool = load_csv(data_dir / "GRNDtl.csv")
     child_pool = child_pool[child_pool["col_1"].isin(parent_keys)].reset_index(drop=True)
     child = baseline.subset(child_pool, EXTRACT_ROWS, rng)
     baseline.make_all_non_null(child)
@@ -84,8 +84,8 @@ def build_scenario(hemas_dir: Path, seed: int):
     return {"GRNHED": parent, "GRNDtl": child}, labels
 
 
-def run(hemas_dir: Path = HEMAS_DIR, with_llm: bool = True, seed: int = DEFAULT_SEED) -> dict:
-    tables, labels = build_scenario(hemas_dir, seed)
+def run(data_dir: Path = COMPANY_A_DIR, with_llm: bool = True, seed: int = DEFAULT_SEED) -> dict:
+    tables, labels = build_scenario(data_dir, seed)
 
     tmp = Path(tempfile.mkdtemp(prefix="dq_eval_"))
     for name, df in tables.items():
@@ -125,14 +125,14 @@ def _aggregate(values: list) -> dict:
     }
 
 
-def run_multiseed(hemas_dir: Path = HEMAS_DIR, seeds=DEFAULT_SEEDS, with_llm: bool = False) -> dict:
+def run_multiseed(data_dir: Path = COMPANY_A_DIR, seeds=DEFAULT_SEEDS, with_llm: bool = False) -> dict:
     """Run the injection eval across seeds and aggregate the key metrics.
 
     Defaults to rules-only (deterministic, free) so robustness reflects the
     detectors, not LLM sampling noise; pass with_llm=True to include the
     combined figure at token cost.
     """
-    runs = [run(hemas_dir, with_llm=with_llm, seed=s)["metrics"] for s in seeds]
+    runs = [run(data_dir, with_llm=with_llm, seed=s)["metrics"] for s in seeds]
     dims = sorted(runs[0]["recall_by_dimension"].keys())
     return {
         "seeds": list(seeds),

@@ -7,8 +7,8 @@ from app.profiler.stats import compute_stats
 from app.profiler.types import infer_types
 from app.rules.arithmetic import check_arithmetic, mine_arithmetic
 
-HEMAS_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
-USSAWATTE_DIR = Path(__file__).resolve().parents[2] / "data" / "ussawatte"
+COMPANY_A_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
+COMPANY_B_DIR = Path(__file__).resolve().parents[2] / "data" / "ussawatte"
 
 
 def _profiled(path):
@@ -20,7 +20,7 @@ def _profiled(path):
 
 
 def test_hemas_qty_price_total_identity_found_with_real_violations():
-    df, types, distinct_counts = _profiled(HEMAS_DIR / "InvoiceDetails.csv")
+    df, types, distinct_counts = _profiled(COMPANY_A_DIR / "InvoiceDetails.csv")
     found = mine_arithmetic(df, types, distinct_counts=distinct_counts)
     real = [
         r
@@ -35,16 +35,16 @@ def test_hemas_qty_price_total_identity_found_with_real_violations():
 def test_zero_inflated_columns_do_not_produce_spurious_identities():
     # col_9 and col_14 are mostly-zero; without informative-row scoring
     # they produce 0*0=0 "identities". None should survive.
-    df, types, distinct_counts = _profiled(HEMAS_DIR / "InvoiceDetails.csv")
+    df, types, distinct_counts = _profiled(COMPANY_A_DIR / "InvoiceDetails.csv")
     found = mine_arithmetic(df, types, distinct_counts=distinct_counts)
     assert all("col_9" not in (r["factor_a"], r["factor_b"], r["product_c"]) or r["conformance"] > 0.99 for r in found)
     assert all("col_14" not in (r["factor_a"], r["factor_b"], r["product_c"]) for r in found)
 
 
 def test_perfectly_clean_identity_produces_no_issue():
-    # Ussawatte col_7 x col_12 = col_13 holds for 100% of rows -> no violation,
+    # Company B col_7 x col_12 = col_13 holds for 100% of rows -> no violation,
     # so the rule correctly emits nothing (there is no data quality problem).
-    df, types, distinct_counts = _profiled(USSAWATTE_DIR / "Dis_InvoiceDetails.csv")
+    df, types, distinct_counts = _profiled(COMPANY_B_DIR / "Dis_InvoiceDetails.csv")
     issues = check_arithmetic("Dis_InvoiceDetails", df, types, distinct_counts=distinct_counts)
     assert issues == []
 

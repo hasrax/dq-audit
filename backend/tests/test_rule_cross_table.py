@@ -5,13 +5,13 @@ import pandas as pd
 from app.io.loader import load_csv
 from app.rules.cross_table import check_cross_table
 
-HEMAS_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
+COMPANY_A_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
 
 
 def _load_grn_tables():
     return {
-        "GRNDtl": load_csv(HEMAS_DIR / "GRNDtl.csv"),
-        "GRNHED": load_csv(HEMAS_DIR / "GRNHED.csv"),
+        "GRNDtl": load_csv(COMPANY_A_DIR / "GRNDtl.csv"),
+        "GRNHED": load_csv(COMPANY_A_DIR / "GRNHED.csv"),
     }
 
 

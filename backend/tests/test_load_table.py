@@ -4,13 +4,13 @@ import pandas as pd
 
 from app.io.loader import list_data_files, load_table
 
-HEMAS_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
+COMPANY_A_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
 
 
 def test_real_seeaerp_files_stay_headerless_positional():
-    # every SeefaERP export begins with a numeric id, so header detection
+    # every ERP export begins with a numeric id, so header detection
     # must NOT fire -- columns stay col_1..col_n.
-    df = load_table(HEMAS_DIR / "GRNHED.csv")
+    df = load_table(COMPANY_A_DIR / "GRNHED.csv")
     assert list(df.columns) == [f"col_{i + 1}" for i in range(16)]
     assert len(df) == 2989
 

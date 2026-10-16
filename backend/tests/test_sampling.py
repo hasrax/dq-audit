@@ -6,11 +6,11 @@ from app.io.loader import load_csv
 from app.profiler.profile import profile_table
 from app.profiler.sampling import build_stratified_sample
 
-HEMAS_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
+COMPANY_A_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
 
 
 def _grnhed():
-    df = load_csv(HEMAS_DIR / "GRNHED.csv")
+    df = load_csv(COMPANY_A_DIR / "GRNHED.csv")
     return df, profile_table(df, "GRNHED")
 
 

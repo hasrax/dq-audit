@@ -1,7 +1,7 @@
 """One Excel workbook with every evaluation result, timestamped (evidence trail).
 
 Usage (from backend/):
-    python -m app.eval.export_workbook [--results ../evaluation/results]
+    python -m app.eval.export_workbook [--results ../evaluation/results] [--freeze]
 
 Also scores the T11 schema-check sheet (evaluation/T11_schema_check_CompanyA.xlsx) if present.
 Writes evaluation/results/evaluation_results.xlsx and a timestamped copy in
@@ -31,7 +31,8 @@ T11_SHEET = ROOT / "evaluation" / "T11_schema_check_CompanyA.xlsx"
 SL = timezone(timedelta(hours=5, minutes=30))
 # tab name -> source CSV (in the results folder), in reading order
 TABS = [
-    ("T3 Precision", "precision.csv"), ("T6 Reproducibility", "reproducibility.csv"),
+    ("T3 Precision", "precision.csv"), ("T5 Injection", "injection_coverage.csv"),
+    ("T6 Reproducibility", "reproducibility.csv"),
     ("T7 AI stability", "ai_stability.csv"), ("T7 Pairs", "ai_stability_pairs.csv"),
     ("T8 Rules vs AI", "complementarity.csv"), ("T10 Projection", "projection_error.csv"),
     ("T11 Schema check", "schema_check_t11.csv"), ("T11 Schema docs", "schema_docs.csv"),
@@ -39,6 +40,33 @@ TABS = [
     ("T13 Tasks v2", "usability_tasks_v2.csv"), ("T13 Participants", "usability.csv"),
     ("T13 SUS", "sus_scores.csv"), ("T13 Integrity", "integrity.csv"), ("T15 Privacy", "privacy_prompts.csv"),
 ]
+
+
+# Summary tabs copied into the hosted app's "Thesis snapshot" view (per-participant tabs stay local).
+SNAPSHOT = ROOT / "config" / "thesis_snapshot.xlsx"
+SNAPSHOT_TABS = ["T3 Precision", "T5 Injection", "T6 Reproducibility", "T7 AI stability", "T7 Pairs",
+                 "T8 Rules vs AI", "T10 Projection", "T11 Schema check", "T11 Schema docs", "T13 Tasks v1",
+                 "T13 Tasks v2", "T15 Privacy"]
+
+
+def freeze(workbook: Path, dst: Path = SNAPSHOT) -> Path:
+    """Copy the summary tabs (plus the README facts and a SUS summary per study
+    iteration) into the file the Evaluation page shows as the thesis snapshot."""
+    sheets = pd.read_excel(workbook, sheet_name=None)
+    with pd.ExcelWriter(dst, engine="openpyxl") as xw:
+        readme = sheets["README"]
+        readme.iloc[:6, :2].to_excel(xw, sheet_name="README", index=False)
+        for tab in SNAPSHOT_TABS:
+            if tab in sheets:
+                sheets[tab].to_excel(xw, sheet_name=tab, index=False)
+        sus = sheets.get("T13 SUS")
+        if sus is not None and "version" in sus.columns:
+            items = [c for c in ("sus", "C1", "C2", "C3", "C4", "C5") if c in sus.columns]
+            rows = [{"iteration": v, "n": len(g), **g[items].mean().round(1).to_dict()}
+                    for v, g in sus.groupby("version")]
+            rows.append({"iteration": "All", "n": len(sus), **sus[items].mean().round(1).to_dict()})
+            pd.DataFrame(rows).to_excel(xw, sheet_name="T13 SUS summary", index=False)
+    return dst
 
 
 def score_t11(sheet: Path, out: Path) -> pd.DataFrame | None:
@@ -86,6 +114,8 @@ def _write_df(ws, df: pd.DataFrame) -> None:
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--results", default=str(RESULTS))
+    ap.add_argument("--freeze", action="store_true",
+                    help=f"also write the thesis-snapshot summary for the Evaluation page ({SNAPSHOT.name})")
     args = ap.parse_args(argv)
     res = Path(args.results)
     t11 = score_t11(T11_SHEET, res)
@@ -138,6 +168,8 @@ def main(argv: list[str] | None = None) -> None:
     print(f"tabs: {sum(1 for s in sources if s[2] != 'not yet available')} of {len(TABS)}; missing: "
           + ", ".join(s[0] for s in sources if s[2] == "not yet available"))
     print(f"wrote {main_path} and {copy.name}")
+    if args.freeze:
+        print(f"froze the thesis snapshot into {freeze(main_path)}")
 
 
 if __name__ == "__main__":

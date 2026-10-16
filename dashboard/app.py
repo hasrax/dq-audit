@@ -552,14 +552,15 @@ def _company_picker(conn, companies: list[dict], admin: bool) -> str:
         slug_, audit_id = st.session_state.pop("_pending_audit")
         st.session_state[f"audit_{slug_}"] = audit_id
     by_slug = {c["slug"]: c for c in companies}
-    options = [ALL_COMPANIES, *by_slug]
+    # real companies first; study / test / replay copies last, marked as evaluation workspaces
+    options = [ALL_COMPANIES, *sorted(by_slug, key=lambda s: by_slug[s]["kind"] != "real")]
     if st.session_state.get("workspace") not in options:
         st.session_state["workspace"] = ALL_COMPANIES
     slug = st.sidebar.selectbox(
         "Company", options, key="workspace",
         format_func=lambda k: "All companies" if k == ALL_COMPANIES else
-        f"{by_slug[k]['name']}  ·  " + (f"{ws.KIND_LABEL[by_slug[k]['kind']]}" if by_slug[k]["kind"] != "real"
-                                         else f"{by_slug[k]['audit_count']} audit(s)"),
+        (f"{by_slug[k]['name']}  ·  {by_slug[k]['audit_count']} audit(s)" if by_slug[k]["kind"] == "real"
+         else f"Evaluation workspace · {by_slug[k]['name']}"),
     )
     if admin and st.sidebar.button("New company", icon=":material/add_business:", key="new_company",
                                    width="stretch"):
@@ -1281,22 +1282,74 @@ def _decisions_caption(acc: int, rej: int) -> str:
 EVAL_SCOPES = ["This audit", "This company", "All companies"]
 
 
+SNAPSHOT_TITLES = {
+    "T3 Precision": "Precision by company and detector (Wilson 95% CI)",
+    "T5 Injection": "Planted-error coverage (known answer key)",
+    "T6 Reproducibility": "Reproducibility and transferability across companies",
+    "T7 AI stability": "AI run-to-run stability",
+    "T7 Pairs": "AI stability: similarity between pairs of runs",
+    "T8 Rules vs AI": "Rules vs AI: problem locations found by each",
+    "T10 Projection": "Trend projection error (flat histories excluded)",
+    "T11 Schema check": "AI-drafted column descriptions judged against the source schema",
+    "T11 Schema docs": "Schema documentation status",
+    "T13 Tasks v1": "Usability study, iteration 1: task completion",
+    "T13 Tasks v2": "Usability study, iteration 2: task completion",
+    "T13 SUS summary": "Usability study: SUS and explanation-clarity ratings",
+    "T15 Privacy": "Privacy check of AI prompts (expected zero)",
+}
+
+
+@st.cache_data(show_spinner=False)
+def _snapshot_tables(mtime: float) -> dict[str, pd.DataFrame]:   # mtime: re-read when the file changes
+    from app.eval.export_workbook import SNAPSHOT
+    return pd.read_excel(SNAPSHOT, sheet_name=None)
+
+
+def _render_thesis_snapshot() -> None:
+    """The frozen evaluation results, exactly as reported in the dissertation."""
+    from app.eval.export_workbook import SNAPSHOT
+    if not SNAPSHOT.exists():
+        st.info("The thesis snapshot has not been frozen yet. It appears here once the evaluation snapshot is taken.")
+        return
+    tables = _snapshot_tables(SNAPSHOT.stat().st_mtime)
+    facts = dict(tables.pop("README").itertuples(index=False, name=None))
+    st.markdown(
+        '<div class="card-sub">These are the frozen numbers reported in the dissertation. They do not change '
+        f'when people review issues. Generated {html.escape(str(facts.get("Generated (Sri Lanka time)", "")))} '
+        f'(Sri Lanka time), commit {html.escape(str(facts.get("Git branch / commit", "")))}, '
+        f'model {html.escape(str(facts.get("AI model (thesis numbers)", "")).split(" via ")[0])}.</div>',
+        unsafe_allow_html=True)
+    tab = st.selectbox("Table", list(tables), format_func=lambda t: f"{t.split()[0]} · {SNAPSHOT_TITLES.get(t, t)}",
+                       key="eval_snapshot_tab")
+    st.dataframe(tables[tab].astype(object).where(tables[tab].notna(), "–"), hide_index=True, width="stretch")
+
+
 def _render_evaluation(conn, upload: dict | None) -> None:
     st.markdown('<div class="page-title">Evaluation</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-sub">How accurate is the tool? Every accept / reject in Triage is a ground-truth '
                 'label, so these numbers are measured on real data and update as people review.</div>',
                 unsafe_allow_html=True)
+    scopes = ["All companies", "Thesis snapshot"]
     if upload is None:
-        uid, client, label, scope = None, None, "all companies", "All companies"
+        uid, client, label = None, None, "all companies"
     else:
         uid, client = upload["id"], upload["source_client"]
         label = client_label(client)
-        scope = st.segmented_control("Scope", ["This company", "This audit", "All companies"], default="This company",
-                                     key="eval_scope", label_visibility="collapsed") or "This company"
+        scopes = ["This company", "This audit", *scopes]
+    scope = st.segmented_control("Scope", scopes, default=scopes[0], key="eval_scope",
+                                 label_visibility="collapsed") or scopes[0]
+    if scope == "Thesis snapshot":
+        _render_thesis_snapshot()
+        return
+    st.caption({"This company": f"{label}: latest audit (as in the thesis tables).",
+                "This audit": f"{label}: the audit selected in the sidebar.",
+                "All companies": "Latest audit of each company in the main results; companies used only "
+                                 "for the transferability test are left out, as in the thesis."}[scope])
     issues = live_eval.scope_issues(
         conn, upload_id=uid if scope == "This audit" else None,
         source_client=client if scope == "This company" else None,
     )
+    audit_ids = sorted({i["upload_id"] for i in issues})
     tm = compute_triage_metrics(issues)
     rule, ai = tm["by_source"]["rule"], tm["by_source"]["llm"]
     ai_decided = ai["accepted"] + ai["rejected"]
@@ -1337,7 +1390,7 @@ def _render_evaluation(conn, upload: dict | None) -> None:
     with right.container(border=True):
         st.markdown('<div class="card-title">Rules vs AI — do they find different problems?</div>',
                     unsafe_allow_html=True)
-        comp = real_complementarity(issues if uid is None else repository.fetch_issues(conn, uid))
+        comp = live_eval.complementarity(conn, audit_ids)
         o = comp["overall"]
         if comp["n_locations"]:
             st.plotly_chart(
@@ -1346,7 +1399,8 @@ def _render_evaluation(conn, upload: dict | None) -> None:
                 config={"displayModeBar": False}, width="stretch", key="eval_comp",
             )
             st.caption(f"{comp['n_locations']} problem locations: {o['rule_only']} rules only, {o['llm_only']} AI only, "
-                       f"{o['both']} both. A small overlap means the two detectors complement each other.")
+                       f"{o['both']} both (rejected issues left out). A small overlap means the two detectors "
+                       "complement each other.")
         else:
             st.markdown('<div class="card-sub">No issues in this audit.</div>', unsafe_allow_html=True)
 

@@ -7,12 +7,12 @@ from app.io.loader import load_csv
 from app.profiler.profile import profile_table
 from app.rules.timeliness import check_timeliness
 
-HEMAS_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
+COMPANY_A_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
 
 
 def test_grnhed_frozen_systemdate_column_flagged_stale():
     # col_16 is constant at 2019-04-19 across all 2989 rows -- a frozen field.
-    df = load_csv(HEMAS_DIR / "GRNHED.csv")
+    df = load_csv(COMPANY_A_DIR / "GRNHED.csv")
     profile = profile_table(df, "GRNHED")
     issues = check_timeliness("GRNHED", df, profile)
     col_16_issues = [i for i in issues if i["column_name"] == "col_16"]
@@ -23,7 +23,7 @@ def test_grnhed_frozen_systemdate_column_flagged_stale():
 
 def test_grnhed_1900_sentinel_time_column_flagged_stale():
     # col_12 (EntryTime) is anchored at 1900-01-01, a classic sentinel-date pattern.
-    df = load_csv(HEMAS_DIR / "GRNHED.csv")
+    df = load_csv(COMPANY_A_DIR / "GRNHED.csv")
     profile = profile_table(df, "GRNHED")
     issues = check_timeliness("GRNHED", df, profile)
     assert any(i["column_name"] == "col_12" and i["rule_id"] == "timeliness_stale_column" for i in issues)
@@ -31,7 +31,7 @@ def test_grnhed_1900_sentinel_time_column_flagged_stale():
 
 def test_grnhed_billdate_columns_are_not_flagged():
     # col_3/col_4 range up to ~2026-05, well within the fresh window as of today.
-    df = load_csv(HEMAS_DIR / "GRNHED.csv")
+    df = load_csv(COMPANY_A_DIR / "GRNHED.csv")
     profile = profile_table(df, "GRNHED")
     issues = check_timeliness("GRNHED", df, profile)
     assert not any(i["column_name"] in ("col_3", "col_4") for i in issues)

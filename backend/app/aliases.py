@@ -5,7 +5,7 @@ module is a DISPLAY-ONLY overlay so a non-technical reviewer sees
 "Invoice No" instead of "col_5". Aliases live in editable JSON at
 config/aliases/<source_client>.json as {table: {col_N: "Friendly"}}.
 Headered uploads already carry real names, so aliasing mainly serves the
-headerless SeefaERP exports (Hemas/Ussawatte).
+headerless ERP exports (Companies A and B).
 """
 from __future__ import annotations
 

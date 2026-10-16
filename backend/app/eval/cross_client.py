@@ -1,7 +1,7 @@
-"""E4 - cross-client reproducibility (Hemas vs Ussawatte).
+"""E4 - cross-client reproducibility (Company A vs Company B).
 
 The identical pipeline (same rule catalogue, same prompts) runs on both
-clients despite their schema differences (Ussawatte prefixes tables with
+clients despite their schema differences (Company B prefixes tables with
 Dis_ and its columns sit in different positions). This module measures
 how much the rule catalogue reproduces across clients: the fraction of
 rule types and dimensions that fire on both, plus DQ-score comparability.

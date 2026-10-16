@@ -1,4 +1,4 @@
-"""Table loading for SeefaERP exports (CSV/Excel, headerless or headered)."""
+"""Table loading for ERP exports (CSV/Excel, headerless or headered)."""
 from __future__ import annotations
 
 import re
@@ -40,7 +40,7 @@ def list_data_files(directory: Path | str) -> list[Path]:
 
 
 def load_csv(path: Path | str) -> pd.DataFrame:
-    """Load a headerless SeefaERP CSV export with positional columns.
+    """Load a headerless ERP CSV export with positional columns.
 
     Kept for callers that specifically want the always-headerless
     behaviour; general ingestion should use load_table.
@@ -71,7 +71,7 @@ def _has_header(raw: pd.DataFrame, sample_rows: int = 25) -> bool:
 
     A header row is fully populated, all-non-numeric, and has distinct
     labels, while the data below it contains at least one numeric cell.
-    SeefaERP exports all begin with a numeric id column, so they are
+    ERP exports all begin with a numeric id column, so they are
     correctly classified as headerless (row 0 has a number).
     """
     if len(raw) < 2:
@@ -123,7 +123,7 @@ def load_table(path: Path | str) -> pd.DataFrame:
     """Load a CSV or Excel export, detecting a header row if present.
 
     Headered files keep their real column names (which double as display
-    aliases); headerless SeefaERP exports fall back to positional
+    aliases); headerless ERP exports fall back to positional
     col_1..col_n. Everything is string-typed so the profiler decides
     types, not pandas.
     """

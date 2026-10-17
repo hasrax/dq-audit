@@ -138,7 +138,10 @@ p, li {{ line-height: 1.6; }}
 .company-card .cstats {{ display:flex; gap:18px; margin-top: 10px; font-size: .88rem; color: var(--muted); }}
 .company-card .cstats b {{ color: var(--text); font-size: 1rem; }}
 /* chat: the conversation fills the screen down to the question bar */
-.st-key-chat_scroll {{ height: calc(100vh - 380px) !important; min-height: 320px; }}
+/* more specific than Streamlit's own fixed height, which is also !important */
+div.stVerticalBlock.st-key-chat_scroll, div[data-testid="stLayoutWrapper"]:has(> .st-key-chat_scroll) {{
+  height: calc(100vh - 410px) !important; min-height: 320px !important; max-height: none !important;
+  flex: 0 0 auto !important; }}   /* the wrapper sizes itself by flex-basis */
 .discussing {{ font-size: .95rem; color: var(--text); line-height: 1.5; }}
 .discussing .label {{ color: var(--muted); font-weight: 650; }}
 /* answers stay readable: about 70 characters per line */
@@ -310,6 +313,12 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
   .st-key-auth_wrap {{ margin-top: 0; }}
   .st-key-auth_card {{ padding: 20px 18px 16px 18px; }}
   .page-title {{ font-size: 1.5rem; }}
+  /* the sidebar's review counts and user card stay on one line */
+  .st-key-review_progress [data-testid="stHorizontalBlock"],
+  .st-key-account_card [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap !important; gap: .5rem; }}
+  .st-key-review_progress [data-testid="stColumn"],
+  .st-key-account_card [data-testid="stColumn"] {{ min-width: 0 !important; width: auto !important; }}
+  .st-key-review_progress [data-testid="stColumn"] {{ flex: 1 1 0 !important; }}
   /* containers whose key starts with "row_" keep their columns side by side */
   [class*="st-key-row_"] [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap !important; gap: .5rem; }}
   [class*="st-key-row_"] [data-testid="stColumn"] {{ min-width: 0 !important; flex: 1 1 0 !important;
@@ -324,7 +333,11 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
   [class*="st-key-wrap_"] [data-testid="stColumn"]:first-child {{ flex: 1 1 100% !important; }}
   .issue-row .sum {{ white-space: normal; }}
   [class*="st-key-irow_"] .issue-row {{ margin-bottom: 22px; }}   /* clear of the actions below */
-  .st-key-chat_scroll {{ height: 58vh !important; min-height: 300px; }}
+  /* Ask fits the screen, so Streamlit's scroll-to-bottom does not push the header under the logo bar */
+  div.stVerticalBlock.st-key-chat_scroll, div[data-testid="stLayoutWrapper"]:has(> .st-key-chat_scroll) {{
+    height: 38vh !important; min-height: 240px !important; flex: 0 0 auto !important; }}
+  .chat-empty {{ padding: 2vh 4% 8px 4%; }}
+  .chat-empty-title {{ font-size: 1.3rem; }}
 }}
 
 /* primary buttons: text colour that reads on the sage primary in both modes */

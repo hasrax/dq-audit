@@ -6,12 +6,12 @@ from app.io.loader import load_csv
 from app.profiler.profile import profile_table
 from app.rules.uniqueness import check_uniqueness
 
-HEMAS_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
-USSAWATTE_DIR = Path(__file__).resolve().parents[2] / "data" / "ussawatte"
+COMPANY_A_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
+COMPANY_B_DIR = Path(__file__).resolve().parents[2] / "data" / "ussawatte"
 
 
 def test_grnhed_has_no_full_row_duplicates():
-    df = load_csv(HEMAS_DIR / "GRNHED.csv")
+    df = load_csv(COMPANY_A_DIR / "GRNHED.csv")
     profile = profile_table(df, "GRNHED")
     issues = check_uniqueness("GRNHED", df, profile)
     assert not any(i["rule_id"] == "uniqueness_full_row_duplicate" for i in issues)
@@ -21,7 +21,7 @@ def test_grnhed_entrytime_near_key_collisions_are_flagged():
     # col_12 (EntryTime, a 1900-01-01-sentinel-date + real time-of-day column)
     # has genuine second-level timestamp collisions across different GRNs --
     # a real near-key duplicate, not a test artifact.
-    df = load_csv(HEMAS_DIR / "GRNHED.csv")
+    df = load_csv(COMPANY_A_DIR / "GRNHED.csv")
     profile = profile_table(df, "GRNHED")
     issues = check_uniqueness("GRNHED", df, profile)
     col_12_issues = [i for i in issues if i["column_name"] == "col_12"]
@@ -30,7 +30,7 @@ def test_grnhed_entrytime_near_key_collisions_are_flagged():
 
 
 def test_whynotbilling_near_key_column_flags_real_duplicates():
-    df = load_csv(USSAWATTE_DIR / "WhyNotBilling.csv")
+    df = load_csv(COMPANY_B_DIR / "WhyNotBilling.csv")
     profile = profile_table(df, "WhyNotBilling")
     issues = check_uniqueness("WhyNotBilling", df, profile)
     col_1_issues = [i for i in issues if i["column_name"] == "col_1"]

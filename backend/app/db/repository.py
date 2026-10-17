@@ -267,6 +267,15 @@ def update_issue_status(
         (status, user_note, status, status, reviewed_by, issue_id),
     )
     conn.commit()
+    _rescore_for([issue_id], conn)
+
+
+def _rescore_for(issue_ids: list[int], conn: psycopg.Connection) -> None:
+    """Rejected issues do not count towards the DQ score, so a decision
+    changes it: re-store the score now, so every page shows the same value."""
+    uploads = conn.execute("SELECT DISTINCT upload_id FROM issues WHERE id = ANY(%s)", (issue_ids,)).fetchall()
+    for (upload_id,) in uploads:
+        score_upload(conn, upload_id)
 
 
 def set_issue_statuses(conn: psycopg.Connection, issue_ids: list[int], status: str,
@@ -285,6 +294,7 @@ def set_issue_statuses(conn: psycopg.Connection, issue_ids: list[int], status: s
         (status, status, status, reviewed_by, ids),
     )
     conn.commit()
+    _rescore_for(ids, conn)
     return len(ids)
 
 
@@ -351,6 +361,7 @@ def fetch_score_trend(conn: psycopg.Connection, source_client: str) -> list[dict
     with conn.cursor(row_factory=dict_row) as cur:
         return cur.execute(
             "SELECT u.id AS upload_id, u.upload_date, u.source_client, "
+            "COALESCE(u.data_as_of, u.upload_date::date) AS as_of, "
             "s.overall_score, s.completeness_score, s.validity_score, "
             "s.consistency_score, s.uniqueness_score, s.timeliness_score, "
             "s.cross_table_score "

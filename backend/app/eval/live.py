@@ -25,19 +25,41 @@ from app.aliases import REPLAY_SUFFIX, base_client
 MIN_DECISIONS = 20   # below this, a precision figure is shown as provisional
 
 
+def latest_upload_ids(conn: psycopg.Connection, source_client: str | None = None) -> list[int]:
+    """The latest audit of one company, or of every real company that the main
+    results pool (local-only transferability companies and study / test /
+    replay copies excluded) -- the same definition as the thesis tables."""
+    if source_client is not None:
+        sql, params = "SELECT max(id) FROM uploads WHERE source_client = %s", (source_client,)
+    else:
+        sql, params = ("SELECT max(u.id) FROM uploads u JOIN workspaces w ON w.slug = u.source_client "
+                       "WHERE w.kind = 'real' AND NOT COALESCE(w.local_only, FALSE) GROUP BY u.source_client"), ()
+    return [r[0] for r in conn.execute(sql, params).fetchall() if r[0] is not None]
+
+
 def scope_issues(conn: psycopg.Connection, upload_id: int | None = None,
                  source_client: str | None = None) -> list[dict]:
-    """Issues of one audit, one company (all its audits), or everything."""
-    sql = "SELECT i.* FROM issues i JOIN uploads u ON u.id = i.upload_id"
-    params: tuple = ()
-    if upload_id is not None:
-        sql, params = sql + " WHERE i.upload_id = %s", (upload_id,)
-    elif source_client is not None:
-        sql, params = sql + " WHERE u.source_client = %s", (source_client,)
-    else:   # all companies = real workspaces only (no study / test / replay copies)
-        sql += " WHERE u.source_client IN (SELECT slug FROM workspaces WHERE kind = 'real')"
+    """Issues of one audit, of a company's latest audit, or of every pooled
+    company's latest audit (see latest_upload_ids)."""
+    ids = [upload_id] if upload_id is not None else latest_upload_ids(conn, source_client)
     with conn.cursor(row_factory=dict_row) as cur:
-        return cur.execute(sql + " ORDER BY i.id", params).fetchall()
+        return cur.execute("SELECT * FROM issues WHERE upload_id = ANY(%s) ORDER BY id", (ids,)).fetchall()
+
+
+def complementarity(conn: psycopg.Connection, upload_ids: list[int]) -> dict:
+    """Rules-only / AI-only / both locations, counted per audit and summed (two
+    companies on the same ERP share table names, so locations never pool)."""
+    from app.db.repository import fetch_issues
+    from app.eval.complementarity import real_complementarity
+
+    total = {"rule_only": 0, "llm_only": 0, "both": 0}
+    for uid in upload_ids:
+        o = real_complementarity(fetch_issues(conn, uid))["overall"]
+        for k in total:
+            total[k] += o[k]
+    n = sum(total.values())
+    return {"n_locations": n,
+            "overall": {**total, **{f"{k}_pct": round(100 * v / (n or 1), 1) for k, v in total.items()}}}
 
 
 def _precision(acc: int, rej: int) -> float | None:

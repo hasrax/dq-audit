@@ -1,9 +1,9 @@
-# ClarityDQ — Explainable Data Quality Audit for SeefaERP
+# ClarityDQ — Explainable Data Quality Audit for SME ERP data
 
 > Working name; set via two constants in `dashboard/app.py`.
 
 An **LLM-augmented, explainable data quality audit framework** for Sri Lankan
-SME systems running SeefaERP. It reads CSV/Excel exports (no database access),
+SME ERP systems. It reads CSV/Excel exports (no database access),
 finds data quality issues with a hybrid of **deterministic rules** and a
 **selective LLM auditor**, explains them in plain language, and lets a
 non-technical reviewer triage them — turning their decisions into ground-truth
@@ -21,7 +21,7 @@ ETL tool.
   validity, consistency, uniqueness, timeliness, cross-table integrity) +
   🤖 *LLM (Type 2)* on a pseudonymized sample for contextual anomalies. Their
   **complementarity** is measured, not assumed.
-- **Schema-agnostic** — real SeefaERP exports are headerless, so detection is
+- **Schema-agnostic** — real ERP exports are headerless, so detection is
   positional and never hard-codes table/column names; the same pipeline runs on
   different clients of the ERP.
 - **Explainable & auditable** — every issue carries a full ontology tuple, a
@@ -88,7 +88,7 @@ All commands run from the repo root with the venv's Python.
 
 ```bash
 # audit + persist + score a client's CSV/Excel directory (add --llm for Type 2)
-python -m app.db.persist data/hemas --llm      # run from backend/, or set PYTHONPATH=backend
+python -m app.db.persist data/<company-folder> --llm      # run from backend/, or set PYTHONPATH=backend
 
 # recurring issues: every audit is matched to the client's previous one
 # (new / worsening / improving / stable + linear projection). To recompute
@@ -98,11 +98,11 @@ python -m app.monitoring.recurrence --backfill
 # time-sliced replay of one real export (config/replay/<client>.json) to
 # demonstrate trends and measure projection error; snapshots go to the
 # git-ignored data/_replay/, source files are never touched
-python -m app.eval.replay data/hemas --client=hemas [--llm]
+python -m app.eval.replay data/<company-folder> --client=<company-key> [--llm]
 
 # AI-drafted schema documentation (review + verify it in the Schema review tab;
 # verified docs are added to later LLM audits). Skips already-documented tables.
-python -m app.schema_docs.generate data/hemas --client=hemas [--regenerate]
+python -m app.schema_docs.generate data/<company-folder> --client=<company-key> [--regenerate]
 
 # the tool -- sign in first. Reviewers: Overview, Triage, Ask (chat), Rules,
 # Scores, Relationships, CSV/Excel export. Admins also get New audit, Schema
@@ -117,7 +117,7 @@ uvicorn app.api:app --reload
 python -m app.eval.run_eval               # E1/E2 injection eval (rules + LLM)
 python -m app.eval.run_eval --multiseed   # E1 robustness across seeds
 python -m app.eval.cross_client           # E4 cross-client reproducibility
-python -m app.eval.figures hemas          # E2 complementarity figure (PNG)
+python -m app.eval.figures <company-key>         # E2 complementarity figure (PNG)
 ```
 
 Column display names: `config/aliases/<client>.json`. Score weights:
@@ -132,7 +132,7 @@ Column display names: `config/aliases/<client>.json`. Score weights:
 | **E1** detection recall | Rules Type 1 recall **1.0** (multi-seed **1.0 ± 0.0**); combined **0.9383** |
 | **E2** complementarity | Rule-only ~80–88% · LLM-only ~6–21% · **Both 0%** — complementary, not redundant |
 | **E3** triage-derived | empirical precision / hallucination / ambiguity (populated by triage) |
-| **E4** cross-client | **83.33%** dimension reproducibility (Hemas ↔ Ussawatte) |
+| **E4** cross-client | **83.33%** dimension reproducibility (Company A ↔ Company B) |
 
 Rule metrics are deterministic; LLM-inclusive figures vary slightly per run.
 

@@ -7,7 +7,7 @@ subject, not PII. Implemented as one testable, citable function per the
 design brief. Local-only endpoints (Ollama) don't require it, but the
 step is always available so the privacy guarantee is uniform.
 
-Because the SeefaERP exports are headerless, PII columns can't be found
+Because the ERP exports are headerless, PII columns can't be found
 by name. A hybrid classifier is used (a locked project decision):
 
   auto-heuristic  - numeric/date columns are never masked (the audit

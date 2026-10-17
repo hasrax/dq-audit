@@ -5,9 +5,11 @@ module is a DISPLAY-ONLY overlay so a non-technical reviewer sees
 "Invoice No" instead of "col_5". Aliases live in editable JSON at
 config/aliases/<source_client>.json as {table: {col_N: "Friendly"}}.
 Headered uploads already carry real names, so aliasing mainly serves the
-headerless SeefaERP exports (Hemas/Ussawatte).
+headerless ERP exports (Companies A and B).
 """
 from __future__ import annotations
+
+import re
 
 import json
 from pathlib import Path
@@ -87,3 +89,35 @@ def display_columns(aliases: dict, table: str, column: str | None) -> str | None
     table_map = aliases.get(table, {})
     parts = [p.strip() for p in column.split(",")]
     return ", ".join(table_map.get(p, p) for p in parts)
+
+
+COL_IN_TABLE = re.compile(r"\b(col_\d+) in (\w+)")
+COL = re.compile(r"(?<!\()\bcol_\d+\b(?!\))")
+
+
+def named(text: str | None, table: str, aliases: dict[str, dict[str, str]], with_code: bool = False) -> str:
+    """Replace positional names (col_N) in issue text with the company's column names.
+    "col_1 in OtherTable" uses OtherTable's names; "Name (col_N)" is left alone.
+    with_code: "Name (col_N)", so technical pages keep the export's column code."""
+    if not text:
+        return text or ""
+
+    def name(code: str, table_map: dict) -> str:
+        known = table_map.get(code)
+        if not known or known == code:
+            return code
+        return f"{known} ({code})" if with_code and f"({code})" not in known else known
+
+    text = COL_IN_TABLE.sub(lambda m: f"{name(m.group(1), aliases.get(m.group(2), {}))} in {m.group(2)}", text)
+    names = aliases.get(table, {})
+    return COL.sub(lambda m: name(m.group(0), names), text)
+
+
+def display_column_code(aliases: dict, table: str, column: str | None) -> str | None:
+    """"Name (col_N)" when the name is known, else the code (comma pairs handled)."""
+    if not column:
+        return column
+    table_map = aliases.get(table, {})
+    parts = [p.strip() for p in column.split(",")]
+    return ", ".join(p if not table_map.get(p) or table_map[p] == p else table_map[p] if f"({p})" in table_map[p]
+                     else f"{table_map[p]} ({p})" for p in parts)

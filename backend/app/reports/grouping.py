@@ -13,6 +13,7 @@ counted in the evaluation; this only decides what a reader sees first:
 """
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 
 UNUSED_NULL_PCT = 99.9        # empty in at least this share of rows -> an unused field
@@ -30,15 +31,37 @@ GROUP_TITLES = {
 }
 
 
-def unused_rule_ids(rules: list[dict]) -> set[int]:
-    """Ids of completeness rules whose column is empty in (almost) every row."""
+def _null_pct_rule_ids(rules: list[dict], low: float, high: float = 101.0) -> set[int]:
     out = set()
     for r in rules:
         if r.get("template") == "completeness_null_pct":
             pct = (r.get("evidence") or {}).get("null_pct")
-            if pct is not None and float(pct) >= UNUSED_NULL_PCT:
+            if pct is not None and low <= float(pct) < high:
                 out.add(r["id"])
     return out
+
+
+def unused_rule_ids(rules: list[dict]) -> set[int]:
+    """Ids of completeness rules whose column is empty in (almost) every row."""
+    return _null_pct_rule_ids(rules, UNUSED_NULL_PCT)
+
+
+MOSTLY_BLANK_NULL_PCT = 50.0   # blank in at least half the rows (but still used)
+
+
+def mostly_blank_rule_ids(rules: list[dict]) -> set[int]:
+    """Ids of completeness rules whose column is blank in most rows but not all:
+    whether that field matters is a business question."""
+    return _null_pct_rule_ids(rules, MOSTLY_BLANK_NULL_PCT, UNUSED_NULL_PCT)
+
+
+ORDERING_RULE = "consistency_ordering_violation"
+
+
+def is_value_order(issue: dict) -> bool:
+    """'Unusual value order' findings (mined orderings between two columns). Often
+    coincidental on named columns, so the UI folds them into one section."""
+    return issue.get("source") == "rule" and issue.get("rule_id") == ORDERING_RULE
 
 
 def is_unused(issue: dict, unused: set[int]) -> bool:
@@ -102,6 +125,72 @@ def type_label(dimension: str) -> str:
     return TYPE_LABELS.get(dimension, dimension.replace("_", " ").capitalize())
 
 
+# one-line plain-English explanations (tooltips) for each kind of problem and each severity
+TYPE_HELP = {
+    "completeness": "Fields that are left empty but should be filled in.",
+    "validity": "Values that cannot be right, such as a quantity below zero.",
+    "accuracy": "Values that cannot be right, such as a quantity below zero.",
+    "consistency": "Values in the same row that contradict each other, such as a total that does not add up.",
+    "uniqueness": "A record or a number that should appear once but appears more than once.",
+    "cross_table": "A row that points to a record that does not exist in the linked table.",
+    "timeliness": "Dates in the future, or a date field that stopped being filled in.",
+}
+SEVERITY_HELP = {
+    "high": "High: can lead to wrong totals, payments or stock. Check these first.",
+    "medium": "Medium: worth fixing, but less urgent.",
+    "low": "Low: a minor problem. Fix it when convenient.",
+}
+
+
+def type_help(dimension: str) -> str:
+    return TYPE_HELP.get(dimension, "")
+
+
+# --- Relationships page: display hints for discovered links (detection unchanged) ---------
+
+_COL_N = re.compile(r"^col_\d+$")
+_SMALL_NUMBER = [   # (pattern on the source column's name, why it can match an ID by chance)
+    (re.compile(r"\b(qty|quantity|quantities)\b", re.I), "quantities are small numbers"),
+    (re.compile(r"\b(no\.? of|number of|count|items)\b", re.I), "item counts are small numbers"),
+    (re.compile(r"\b(order|line)\b", re.I), "line order is 1, 2, 3…"),
+]
+_ID_ENDING = re.compile(r"\b(no|number|code|id|ref)\.?$", re.I)   # "Order No" is an identifier, not a count
+LINK_GROUPS = {"same": "Same name on both sides", "careful": "Check carefully", "different": "Different names"}
+
+
+def link_group(child_name: str, parent_name: str) -> tuple[str, str]:
+    """('same' | 'careful' | 'different', reason) for a discovered link, from the column
+    names people see. 'careful': a count, quantity or line order "matched" an ID column."""
+    for rx, why in _SMALL_NUMBER:
+        if rx.search(child_name) and not _ID_ENDING.search(child_name):
+            return "careful", why
+    known = not _COL_N.match(child_name) and not _COL_N.match(parent_name)
+    if known and re.sub(r"[\W_]+", "", child_name).lower() == re.sub(r"[\W_]+", "", parent_name).lower():
+        return "same", "the same name on both sides"
+    return "different", ""
+
+
+def rule_uses(rules: list[dict]) -> dict[tuple, int]:
+    """How many cross-table rules use each link: {(child_table, child_col, parent_table, parent_col): n}."""
+    out: dict[tuple, int] = {}
+    for r in rules:
+        if r.get("template") == "cross_table_fk_orphan":
+            p = r.get("parameters") or {}
+            key = (r["table_name"], r["column_name"], p.get("parent_table"), p.get("parent_column"))
+            out[key] = out.get(key, 0) + 1
+    return out
+
+
+def link_disagrees(evidence: dict) -> bool:
+    """A cross-table rule whose two numbers disagree: most different values match
+    the linked key (>= 90%) but most rows do not (>= 50% unmatched)."""
+    try:
+        return (float(evidence.get("overlap_pct", 0)) >= 90
+                and int(evidence.get("orphan_count", 0)) >= 0.5 * int(evidence.get("row_count") or 0) > 0)
+    except (TypeError, ValueError):
+        return False
+
+
 def priority(issue: dict) -> tuple:
     """Sort key, most important first: severity, then how much that kind of
     problem weighs in the DQ score (consistency / cross-table highest), then
@@ -137,13 +226,14 @@ ACTIONS = {
 FIX_NOW_DIMENSIONS = {"cross_table", "consistency", "uniqueness", "validity", "accuracy"}
 
 
-def action_category(issue: dict, unused: set[int]) -> str:
+def action_category(issue: dict, unused: set[int], mostly_blank: set[int] = frozenset()) -> str:
     """Fix now = high-severity rule findings on links, consistency, duplicates or
-    wrong values; Check = AI findings (need a person's judgement of the business
-    context); Not in use = fields never filled in; everything else can wait."""
+    wrong values; Check = AI findings and mostly-blank fields (need a person's
+    judgement of the business context); Not in use = fields never filled in;
+    everything else can wait."""
     if is_unused(issue, unused):
         return "not_used"
-    if issue.get("source") == "llm":
+    if issue.get("source") == "llm" or (issue.get("source") == "rule" and issue.get("rule_ref") in mostly_blank):
         return "check"
     if issue["severity"] == "high" and issue["dimension"] in FIX_NOW_DIMENSIONS:
         return "fix_now"

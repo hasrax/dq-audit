@@ -1,6 +1,6 @@
 """Build a cleaned baseline extract from a real client table (E1).
 
-Takes a subset of a real Hemas/Ussawatte table and removes the specific
+Takes a subset of a real Company A / Company B table and removes the specific
 error conditions we are about to inject on the target columns, so that
 after injection a detected error in those columns is attributable to a
 known injection. Recall is already exact against the injected labels;

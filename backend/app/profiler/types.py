@@ -1,7 +1,7 @@
 """Per-column type inference from string-typed values.
 
 Columns are positional and untitled (see app.io.loader), so type
-inference works purely on value syntax: int, decimal (SeefaERP money
+inference works purely on value syntax: int, decimal (ERP money
 columns render as 2 or 4 decimal places), date/datetime, or varchar.
 """
 from __future__ import annotations

@@ -17,6 +17,9 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from app.aliases import display_columns
+from app.reports.wording import DATE_FORMAT, show
+
+SOURCE_LABEL = {"rule": "Rule", "llm": "AI"}
 
 ISSUE_FIELDS = [
     "organisation", "upload", "table", "column", "dimension", "source", "severity",
@@ -47,16 +50,17 @@ def issue_rows(issues: list[dict], aliases: dict | None = None, organisation: st
             "table": issue["table_name"],
             "column": display_columns(aliases, issue["table_name"], issue.get("column_name")) or "",
             "dimension": issue["dimension"],
-            "source": issue["source"],
+            "source": SOURCE_LABEL.get(issue["source"], issue["source"]),
             "severity": issue["severity"],
             "trend_status": issue.get("trend_status") or "",
             "affected_rows": affected if affected is not None else ref.get("count"),
-            "explanation": issue.get("description"),
-            "recommendation": issue.get("recommendation"),
+            "explanation": show(issue.get("description"), issue["table_name"], aliases),
+            "recommendation": show(issue.get("recommendation"), issue["table_name"], aliases),
             "fixable": issue.get("fixable"),
             "status": issue.get("status"),
             "reviewer": issue.get("reviewed_by") or "",
-            "reviewed_at": reviewed_at.strftime("%Y-%m-%d %H:%M") if isinstance(reviewed_at, datetime) else (reviewed_at or ""),
+            "reviewed_at": (reviewed_at.strftime(f"{DATE_FORMAT} %H:%M") if isinstance(reviewed_at, datetime)
+                            else (reviewed_at or "")),
             "user_note": issue.get("user_note") or "",
         })
     return rows
@@ -102,7 +106,7 @@ def issues_to_xlsx(
     summary.append([title or "Data quality audit — issue export"])
     summary["A1"].font = Font(bold=True, size=14)
     summary.append([f"Organisation: {organisation}" if organisation else ""])
-    summary.append([f"Exported {datetime.now():%Y-%m-%d %H:%M} · {len(rows)} issues"])
+    summary.append([f"Exported {datetime.now():{DATE_FORMAT} %H:%M} · {len(rows)} issues"])
     active = {k: v for k, v in (filters or {}).items() if v not in (None, "", "(all)")}
     summary.append(["Filters: " + (", ".join(f"{k} = {v}" for k, v in active.items()) if active else "none")])
     summary.append([])
@@ -125,7 +129,7 @@ def issues_to_xlsx(
     for cell in summary[summary.max_row]:
         cell.fill, cell.font = HEADER_FILL, HEADER_FONT
     for source, n in sorted(Counter(r["source"] for r in rows).items()):
-        summary.append(["Rule (Type 1)" if source == "rule" else "AI / LLM (Type 2)", n])
+        summary.append([source, n])
     summary.column_dimensions["A"].width = 28
     for letter in "BCDE":
         summary.column_dimensions[letter].width = 12

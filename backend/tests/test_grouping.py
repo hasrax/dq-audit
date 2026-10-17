@@ -50,3 +50,38 @@ def test_action_categories():
     assert grouping.action_category(_i(3, "T", "completeness_null_pct", ref=9), unused) == "not_used"
     assert grouping.action_category(_i(4, "T", None, source="llm"), unused) == "check"
     assert grouping.action_category(_i(5, "T", "validity_negative_value", sev="medium"), unused) == "can_wait"
+
+
+def test_mostly_blank_fields_go_to_check():
+    rules = [{"id": n, "template": "completeness_null_pct", "evidence": {"null_pct": pct}}
+             for n, pct in ((1, 100.0), (2, 99.9), (3, 75.0), (4, 50.0), (5, 49.9))]
+    assert grouping.unused_rule_ids(rules) == {1, 2}
+    blank = grouping.mostly_blank_rule_ids(rules)
+    assert blank == {3, 4}
+    assert grouping.action_category(_i(1, "T", "completeness_null_pct", ref=3), set(), blank) == "check"
+    assert grouping.action_category(_i(2, "T", "completeness_null_pct", ref=5), set(), blank) == "can_wait"
+
+
+def test_value_order_findings_are_marked():
+    assert grouping.is_value_order(_i(1, "T", "consistency_ordering_violation"))
+    assert not grouping.is_value_order(_i(2, "T", "cross_table_fk_orphan"))
+    assert not grouping.is_value_order(_i(3, "T", "consistency_ordering_violation", source="llm"))
+
+
+def test_link_groups():
+    assert grouping.link_group("No Of Items", "GRN Number") == ("careful", "item counts are small numbers")
+    assert grouping.link_group("Purchased Quantity", "Receipt Computer Code")[0] == "careful"
+    assert grouping.link_group("Item Order", "GRN Number") == ("careful", "line order is 1, 2, 3…")
+    assert grouping.link_group("Order No", "Order No")[0] == "same"            # an identifier, not a count
+    assert grouping.link_group("GRN Number", "GRN Number")[0] == "same"
+    assert grouping.link_group("col_1", "col_1")[0] == "different"            # unknown names decide nothing
+    assert grouping.link_group("Supplier", "Supplier Code")[0] == "different"
+
+
+def test_link_disagrees_and_rule_uses():
+    assert grouping.link_disagrees({"overlap_pct": 96.3, "orphan_count": 269501, "row_count": 272519})
+    assert not grouping.link_disagrees({"overlap_pct": 96.3, "orphan_count": 60, "row_count": 20608})
+    assert not grouping.link_disagrees({"overlap_pct": 80, "orphan_count": 9, "row_count": 10})
+    rules = [{"template": "cross_table_fk_orphan", "table_name": "A", "column_name": "c",
+              "parameters": {"parent_table": "B", "parent_column": "id"}}] * 2
+    assert grouping.rule_uses(rules) == {("A", "c", "B", "id"): 2}

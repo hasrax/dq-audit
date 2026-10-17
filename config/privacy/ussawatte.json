@@ -1,4 +1,21 @@
 {
-  "_comment": "Per-client cloud-privacy overrides, applied automatically before any LLM call. 'mask' wins over the heuristic and over 'keep'. List columns the heuristic cannot see as PII: phone numbers stored as integers, national IDs, geo-coordinates.",
-  "CustomerMaster": {"mask": ["col_4", "col_16", "col_21"]}
+  "_comment": "Per-client privacy overrides for Company B, applied automatically before any LLM call. 'mask' wins over the heuristic and over 'keep'. Phone numbers stored as integers (col_4), national IDs (col_16), and GPS coordinates (col_21; col_23 'remarks' and WhyNotBilling col_7 'bill location' and Dis_InvoiceHeader col_23 'location' also hold coordinates -- found by the T15 privacy check, 14 Oct 2026).",
+  "CustomerMaster": {
+    "mask": [
+      "col_4",
+      "col_16",
+      "col_21",
+      "col_23"
+    ]
+  },
+  "WhyNotBilling": {
+    "mask": [
+      "col_7"
+    ]
+  },
+  "Dis_InvoiceHeader": {
+    "mask": [
+      "col_23"
+    ]
+  }
 }

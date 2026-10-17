@@ -1,6 +1,6 @@
 """Build the study workspace: a copy of one real audit's results.
 
-Participants work on "Study – <company>", a copy of one real audit
+Participants work on the "Study copy", a copy of one real audit
 (profile, relationships, rules, issues with explanations, score). There
 is exactly one study workspace: building a new copy removes the old one.
 No source files are needed, so it loads fast on a small hosted server.
@@ -18,7 +18,7 @@ noise itself is reported as a transferability finding (T6). The DQ
 score is recomputed from the issues that were kept.
 
 Usage:
-    python -m app.study.setup --from-upload=<upload id> [--name="Study – Company D"]
+    python -m app.study.setup --from-upload=<upload id> [--name="Study copy"]
 """
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def build_study_workspace(conn: psycopg.Connection, from_upload: int, name: str 
         raise SystemExit(f"upload #{from_upload} does not exist")
     parent, row_count, as_of, uploaded = src
     refresh_names(conn)
-    name = name or f"Study – {client_label(parent)}"
+    name = name or "Study copy"
     slug = slug or "study-" + slugify(client_label(parent))
     if replace_others:   # one study at a time: retire any other study copy
         old = [r[0] for r in conn.execute("SELECT slug FROM workspaces WHERE kind = 'study' AND slug <> %s",

@@ -12,12 +12,12 @@ from app.privacy.pseudonymize import (
     pseudonymize_sample,
 )
 
-USSAWATTE_DIR = Path(__file__).resolve().parents[2] / "data" / "ussawatte"
-HEMAS_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
+COMPANY_B_DIR = Path(__file__).resolve().parents[2] / "data" / "ussawatte"
+COMPANY_A_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
 
 
 def _customermaster():
-    df = load_csv(USSAWATTE_DIR / "CustomerMaster.csv")
+    df = load_csv(COMPANY_B_DIR / "CustomerMaster.csv")
     return df, profile_table(df, "CustomerMaster")
 
 

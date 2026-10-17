@@ -6,19 +6,19 @@ from app.io.loader import load_csv
 from app.profiler.profile import profile_table
 from app.rules.validity import check_validity
 
-HEMAS_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
-USSAWATTE_DIR = Path(__file__).resolve().parents[2] / "data" / "ussawatte"
+COMPANY_A_DIR = Path(__file__).resolve().parents[2] / "data" / "hemas"
+COMPANY_B_DIR = Path(__file__).resolve().parents[2] / "data" / "ussawatte"
 
 
 def test_no_negatives_in_grnhed_fires_no_issues():
-    df = load_csv(HEMAS_DIR / "GRNHED.csv")
+    df = load_csv(COMPANY_A_DIR / "GRNHED.csv")
     profile = profile_table(df, "GRNHED")
     issues = check_validity("GRNHED", df, profile)
     assert issues == []
 
 
 def test_dis_invoiceheader_negative_column_fires_medium_severity():
-    df = load_csv(USSAWATTE_DIR / "Dis_InvoiceHeader.csv")
+    df = load_csv(COMPANY_B_DIR / "Dis_InvoiceHeader.csv")
     profile = profile_table(df, "Dis_InvoiceHeader")
     issues = check_validity("Dis_InvoiceHeader", df, profile)
     col_12_issues = [i for i in issues if i["column_name"] == "col_12"]

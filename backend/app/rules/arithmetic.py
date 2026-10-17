@@ -13,7 +13,7 @@ matches, so dense-ID columns had to be filtered out. Arithmetic
 strong constraint that essentially never holds by chance -- and the
 quantity column we most need is exactly the one that looks FK-ish
 (small integers overlapping a dense ID range). Confirmed on real data:
-Hemas InvoiceDetails col_3 (qty) x col_6 (price) = col_11 (total) holds
+Company A InvoiceDetails col_3 (qty) x col_6 (price) = col_11 (total) holds
 for 99.996% of rows, but col_3 had been flagged an FK-role column, so
 excluding it -- as ordering does -- would hide the single most
 important consistency identity in the dataset.
@@ -23,7 +23,7 @@ A light min_distinct drops constant columns, and a tolerance model
 guard, though, is measuring conformance over *informative* rows only
 (where the product or c is non-zero). Without it, near-all-zero columns
 produce a flood of degenerate "0 x 0 = 0" matches -- confirmed on real
-data, where Hemas InvoiceDetails has two mostly-zero columns (col_9:
+data, where Company A InvoiceDetails has two mostly-zero columns (col_9:
 259,575/272,519 zeros; col_14: 269,461 zeros) that generated 16
 spurious triples (anything x col_9 ~= col_14) alongside the one real
 identity. Scored over all rows those junk triples reach ~0.95
@@ -67,7 +67,7 @@ def mine_arithmetic(
     the product or c is non-zero -- so the mass of trivial 0 ~= 0 rows
     in zero-heavy columns can't inflate the score. This is what cleanly
     separates the real identity from the degenerate matches: on real
-    Hemas data col_3 x col_6 = col_11 scores 0.9999 informative
+    Company A data col_3 x col_6 = col_11 scores 0.9999 informative
     conformance, while the zero-inflated junk (col_3 x col_14 = col_9
     etc.) collapses to <0.09.
     """

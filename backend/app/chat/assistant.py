@@ -30,6 +30,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from app.aliases import base_client, client_label
+from app.reports.wording import show
 from app.db import repository
 from app.config import load_settings
 from app.llm.client import LLMClient
@@ -51,8 +52,13 @@ Answer only from the profile, schema documentation, and audit results \
 provided. If a question needs data that is not included, say so clearly \
 instead of guessing. Never invent numbers. Do not write SQL or code.
 
-Write in plain business English, short paragraphs or a few bullet points, \
-no database jargon. Do not use markdown headings; use **bold** labels instead. Column names like col_3 may have a friendly name in \
+Write in plain business English, no database jargon. Keep every answer \
+short: at most about 120 words, at most 4 bullet points, no markdown \
+headings (use **bold** labels instead). When you show example rows, use one \
+small markdown table (at most 5 rows). End every answer with one last line \
+in italics that starts with "Based on:" and names what you used, for example \
+"*Based on: issue #123 and 5 example rows*" or "*Based on: the audit summary \
+and the profile of InvoiceDetails*". Column names like col_3 may have a friendly name in \
 brackets; use the friendly name when there is one. Some values appear as \
 MASK_xxxx because they were hidden for privacy; never guess them, but \
 two identical MASK values do mean the same original value, so you can say \
@@ -116,8 +122,8 @@ def _issue_detail(conn: psycopg.Connection, issue: dict, aliases: dict) -> str:
     lines = [
         f"SELECTED ISSUE #{issue['id']}:",
         _issue_line(issue, aliases),
-        f"What was found: {issue.get('description') or ''}",
-        f"Recommendation: {issue.get('recommendation') or ''}",
+        f"What was found: {show(issue.get('description'), issue['table_name'], aliases)}",
+        f"Recommendation: {show(issue.get('recommendation'), issue['table_name'], aliases)}",
         f"Fixable: {issue.get('fixable') or 'unknown'}",
     ]
     if issue.get("user_note"):
@@ -125,7 +131,8 @@ def _issue_detail(conn: psycopg.Connection, issue: dict, aliases: dict) -> str:
     if issue.get("rule_ref"):
         rule = repository.fetch_rule(conn, issue["rule_ref"])
         if rule:
-            lines += [f"Rule — what it checks: {rule['what_text']}", f"Rule — why it exists: {rule['why_text']}"]
+            lines += [f"Rule — what it checks: {show(rule['what_text'], issue['table_name'], aliases)}",
+                      f"Rule — why it exists: {show(rule['why_text'], issue['table_name'], aliases)}"]
     lines += _example_rows(conn, issue, aliases)
     return "\n".join(lines)
 

@@ -7,7 +7,9 @@ Definitions
   SUS                         per participant: (sum over odd items of (score - 1) +
                               sum over even items of (5 - score)) x 2.5; benchmark 68
   C1-C5                       explanation-clarity items, mean on the 1-5 scale
-P00 (the pilot) is always excluded.
+P00 (the pilot) is always excluded. The study ran in two iterations
+(evaluation/study_versions.json): a participant belongs to the version that
+was live when they started; results are reported per iteration, not pooled.
 
 Usage (from backend/):
     python -m app.eval.study_results [--cloud] [--sus "SUS Responses.csv"] [--out ../evaluation/results]
@@ -21,6 +23,7 @@ hosted database's UTC session times.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import statistics
@@ -39,7 +42,26 @@ from app.study.participants import N_TASKS, PILOT_CODE, TASKS  # noqa: E402
 
 SUS_BENCHMARK = 68.0
 MAX_GAP_HOURS = 2.0
+FAST_MINUTES, LONG_HOURS = 4.0, 2.0          # integrity: unusually fast / left-open sessions
 OUT_DEFAULT = Path(__file__).resolve().parents[3] / "evaluation" / "results"
+VERSIONS_DEFAULT = Path(__file__).resolve().parents[3] / "evaluation" / "study_versions.json"
+
+
+def assign_versions(people: pd.DataFrame, versions_file: Path | None) -> pd.DataFrame:
+    """Add a "version" column: the iteration that was live when each participant started."""
+    people = people.copy()
+    if people.empty:
+        people["version"] = []
+        return people
+    start = None
+    if versions_file and versions_file.exists():
+        for v in json.loads(versions_file.read_text(encoding="utf-8"))["versions"]:
+            if v.get("live_from_utc"):
+                start = (v["version"], pd.Timestamp(v["live_from_utc"]).tz_localize(None))
+    people["version"] = "v1"
+    if start:
+        people.loc[pd.to_datetime(people["started_at"]) >= start[1], "version"] = start[0]
+    return people
 
 
 # --- SUS ----------------------------------------------------------------------
@@ -56,8 +78,9 @@ def _num(value) -> float | None:
 
 
 def parse_sus(path: Path) -> tuple[pd.DataFrame, list[str]]:
-    """Read the Google Form CSV, matching columns by prefix (Q1.-Q10., C1.-C5.)."""
-    raw = pd.read_csv(path, dtype=str, keep_default_na=False)
+    """Read the Google Form responses (CSV or Excel), matching columns by prefix (Q1.-Q10., C1.-C5.)."""
+    raw = (pd.read_excel(path, dtype=str).fillna("") if Path(path).suffix.lower() in (".xlsx", ".xls")
+           else pd.read_csv(path, dtype=str, keep_default_na=False))   # Forms CSV or Sheets download
     cols = {c: c for c in raw.columns}
     q = {int(m.group(1)): c for c in cols if (m := re.match(r"^\s*Q(\d+)\.", c))}
     cl = {int(m.group(1)): c for c in cols if (m := re.match(r"^\s*C(\d+)\.", c))}
@@ -143,6 +166,15 @@ def integrity(people: pd.DataFrame, sus: pd.DataFrame, utc_offset_h: float,
     checks = [{"check": "AI chat failed during session", "code": code,
                "detail": f"{n} answer(s) failed or came from the backup model"}
               for code, n in sorted((chat_failed or {}).items())]
+    if not people.empty and {"started_at", "finished_at"} <= set(people.columns):
+        for _, p in people.dropna(subset=["started_at", "finished_at"]).iterrows():
+            minutes = (pd.Timestamp(p["finished_at"]) - pd.Timestamp(p["started_at"])).total_seconds() / 60
+            if minutes < FAST_MINUTES:
+                checks.append({"check": f"session under {FAST_MINUTES:g} minutes", "code": p["code"],
+                               "detail": f"{minutes:.1f} min"})
+            elif minutes > LONG_HOURS * 60:
+                checks.append({"check": f"session open over {LONG_HOURS:g} hours", "code": p["code"],
+                               "detail": f"{minutes / 60:.1f} h (times for this code are not comparable)"})
     if sus.empty:
         return pd.DataFrame(checks, columns=["check", "code", "detail"])
     for code in sorted(set(sus["code"]) - issued - {PILOT_CODE}):
@@ -216,6 +248,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--sus")
     ap.add_argument("--out", default=str(OUT_DEFAULT))
     ap.add_argument("--form-utc-offset", type=float, default=5.5)
+    ap.add_argument("--versions", default=str(VERSIONS_DEFAULT))
     args = ap.parse_args(argv)
 
     settings = load_settings()
@@ -226,6 +259,7 @@ def main(argv: list[str] | None = None) -> None:
     out.mkdir(parents=True, exist_ok=True)
     with psycopg.connect(url) as conn:
         people, tasks, chat_failed = load_study(conn)
+    people = assign_versions(people, Path(args.versions))
 
     n = len(people[people["status"] != "not_started"]) if not people.empty else 0
     print(__doc__.split("Usage")[0].strip())
@@ -241,7 +275,14 @@ def main(argv: list[str] | None = None) -> None:
     md = ["# Usability study results (T13, RQ5)", "",
           f"Participants who started: **{n}** (pilot P00 excluded). Source: {'hosted' if args.cloud else 'local'} "
           "database" + (f"; SUS responses: {Path(args.sus).name}" if args.sus else "; no SUS file given") + ".", "",
-          "## Task completion", _md_table(pt)]
+          "## Task completion (all participants)", _md_table(pt)]
+    started = people[people["status"] != "not_started"] if n else people
+    for v in sorted(started["version"].unique()) if n else []:
+        codes = set(started[started["version"] == v]["code"])
+        pv = per_task(tasks[tasks["code"].isin(codes)], len(codes))
+        md += [f"## Task completion, iteration {v} (n = {len(codes)})", _md_table(pv)]
+        pv.to_csv(out / f"usability_tasks_{v}.csv", index=False)
+        fig_tasks(pv, out / f"fig_task_completion_{v}.png")
     if not pp.empty:
         pp.to_csv(out / "usability.csv", index=False)
         md += ["## Per participant", _md_table(pp.drop(columns=["task1_answer"])),
@@ -254,8 +295,15 @@ def main(argv: list[str] | None = None) -> None:
         summary = {"n": len(s), "mean": round(s.mean(), 1), "sd": round(s.std(ddof=1), 1) if len(s) > 1 else None,
                    "median": round(s.median(), 1), "min": s.min(), "max": s.max(),
                    "above_68": int((s > SUS_BENCHMARK).sum())}
-        md += ["## SUS", _md_table(pd.DataFrame([summary])),
+        md += ["## SUS (all participants)", _md_table(pd.DataFrame([summary])),
                f"Mean vs benchmark {SUS_BENCHMARK:g}: {summary['mean'] - SUS_BENCHMARK:+.1f} points.", ""]
+        version_of = dict(zip(people["code"], people["version"]))
+        sus["version"] = sus["code"].map(version_of)
+        by_v = [{"iteration": v, "n": len(g), "mean": round(g["sus"].mean(), 1),
+                 "sd": round(g["sus"].std(ddof=1), 1) if len(g) > 1 else None, "median": round(g["sus"].median(), 1),
+                 "above_68": int((g["sus"] > SUS_BENCHMARK).sum())}
+                for v, g in sus.groupby("version")]
+        md += ["## SUS by iteration", _md_table(pd.DataFrame(by_v))]
         c_cols = [c for c in sus.columns if re.fullmatch(r"C\d", c)]
         if c_cols:
             md += ["## Explanation clarity (C items, 1-5)",

@@ -62,8 +62,10 @@ def test_company_dashboard_renders_kpi_cards():
 
 def test_scores_page_renders_overall_score():
     at = _app(page="scores")
-    assert "Overall Data Quality Score" in _text(at)
-    assert "By dimension" in _text(at)
+    assert not at.exception, at.exception
+    text = _text(at)
+    for label in ("Data quality score · this audit", "Why is it", "Score by type of problem"):
+        assert label in text
 
 
 def test_triage_has_filters_and_decision_buttons():
@@ -101,22 +103,19 @@ def test_all_companies_mode_renders(page):
 def test_signed_out_users_see_only_the_login_form():
     at = _app(user=None)
     assert not at.exception
-    assert sorted(t.label for t in at.text_input) == ["Password", "Username"]
+    # one screen: staff sign-in, and the study code underneath
+    assert sorted(t.label for t in at.text_input) == ["Password", "Study code", "Username"]
     assert "_pages" not in at.session_state
-    at.button(key="to_study").click().run()          # "Taking part in the usability study?"
-    assert [t.label for t in at.text_input] == ["Your code"]
-    at.button(key="to_staff").click().run()
-    assert sorted(t.label for t in at.text_input) == ["Password", "Username"]
 
 
-def test_study_link_opens_the_code_page_prefilled():
+def test_study_link_prefills_the_code():
     from streamlit.testing.v1 import AppTest
 
     at = AppTest.from_file(str(APP_PATH), default_timeout=90)
     at.query_params["study"] = "p03"
     at.run()
     assert not at.exception
-    assert [(t.label, t.value) for t in at.text_input] == [("Your code", "P03")]
+    assert next(t.value for t in at.text_input if t.label == "Study code") == "P03"
 
 
 def test_reviewer_gets_no_admin_pages():

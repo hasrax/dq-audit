@@ -70,9 +70,11 @@ def _rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
 
 
-def pill(text: str, color: str) -> str:
+def pill(text: str, color: str, title: str = "") -> str:
+    """A soft label; `title` is a one-line explanation shown on hover."""
+    tip = f' title="{html.escape(title)}"' if title else ""
     return (f'<span class="pill" style="color:{color};background:{_rgba(color, .10)};'
-            f'border-color:{_rgba(color, .32)}">{html.escape(text)}</span>')
+            f'border-color:{_rgba(color, .32)}"{tip}>{html.escape(text)}</span>')
 
 
 def kpi_card(label: str, value: str, caption: str, color: str, inside_panel: bool = False) -> str:
@@ -231,7 +233,14 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 .issue-row .meta {{ margin-top: 4px; color: var(--faint); font-size: .875rem; }}
 .section-label {{ font-size: .8rem; text-transform: uppercase; letter-spacing: .5px; color: var(--faint);
   margin: 14px 0 4px 0; font-weight: 650; }}
-.decision-gap {{ height: 12px; }}   /* issue dialog: Accept / Reject / Unsure line up with the note box */
+.decision-gap {{ height: 12px; }}
+.hint {{ text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }}   /* has a tooltip */
+.guide-step {{ font-size: .8rem; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+  color: var(--sage); margin-bottom: 4px; }}
+.guide-text {{ font-size: 1rem; line-height: 1.55; color: var(--text); max-width: 70ch; }}
+/* compact user card at the bottom of the sidebar */
+.st-key-account_card {{ padding: 8px 12px !important; gap: 0 !important; }}
+.st-key-account_card p {{ margin: 0; line-height: 1.35; }}   /* issue dialog: Accept / Reject / Unsure line up with the note box */
 
 .rule-card {{ background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 12px 16px; margin: 0 0 4px 0; }}

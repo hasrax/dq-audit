@@ -124,6 +124,27 @@ def type_label(dimension: str) -> str:
     return TYPE_LABELS.get(dimension, dimension.replace("_", " ").capitalize())
 
 
+# one-line plain-English explanations (tooltips) for each kind of problem and each severity
+TYPE_HELP = {
+    "completeness": "Fields that are left empty but should be filled in.",
+    "validity": "Values that cannot be right, such as a quantity below zero.",
+    "accuracy": "Values that cannot be right, such as a quantity below zero.",
+    "consistency": "Values in the same row that contradict each other, such as a total that does not add up.",
+    "uniqueness": "A record or a number that should appear once but appears more than once.",
+    "cross_table": "A row that points to a record that does not exist in the linked table.",
+    "timeliness": "Dates in the future, or a date field that stopped being filled in.",
+}
+SEVERITY_HELP = {
+    "high": "High: can lead to wrong totals, payments or stock. Check these first.",
+    "medium": "Medium: worth fixing, but less urgent.",
+    "low": "Low: a minor problem. Fix it when convenient.",
+}
+
+
+def type_help(dimension: str) -> str:
+    return TYPE_HELP.get(dimension, "")
+
+
 def priority(issue: dict) -> tuple:
     """Sort key, most important first: severity, then how much that kind of
     problem weighs in the DQ score (consistency / cross-table highest), then

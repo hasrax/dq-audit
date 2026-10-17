@@ -161,8 +161,18 @@ def _none_if_all(value: str) -> str | None:
     return None if value == ALL else value
 
 
-def _pill(text: str, color: str) -> str:
-    return ui.pill(text, color)
+def _pill(text: str, color: str, title: str = "") -> str:
+    return ui.pill(text, color, title)
+
+
+def _severity_pill(severity: str) -> str:
+    return _pill(severity.title(), SEVERITY_COLOR.get(severity, ui.MUTED), grouping.SEVERITY_HELP.get(severity, ""))
+
+
+def _type_html(dimension: str) -> str:
+    """The plain issue type with its one-line explanation on hover."""
+    return (f'<span class="hint" title="{html.escape(grouping.type_help(dimension))}">'
+            f'{html.escape(grouping.type_label(dimension))}</span>')
 
 
 def _outline_pill(text: str) -> str:
@@ -287,8 +297,8 @@ def _staff_login(conn) -> None:
 def _render_account_sidebar() -> None:
     user = _current_user()
     role = {"admin": "Administrator", "participant": "Study participant"}.get(user["role"], "Reviewer")
-    with st.sidebar.container(border=True):
-        name_col, out_col = st.columns([3, 1.4], vertical_alignment="center")
+    with st.sidebar.container(border=True, key="account_card"):
+        name_col, out_col = st.columns([3, 1.1], vertical_alignment="center")
         name_col.markdown(f"**{html.escape(user['username'])}**  \n:gray[{role}]")
         if out_col.button("", key="sign_out", icon=":material/logout:", help="Sign out", width="stretch"):
             for k in ("user", "username"):
@@ -321,19 +331,21 @@ def main() -> None:
     ws.refresh_names(conn)
     # study / test / replay copies are for admins only, and clearly labelled
     companies = ws.list_workspaces(conn, kinds=ws.KINDS if admin else ("real",))
+    # top of the sidebar: company, then audit, then the admin's New company / Import
     slug = _company_picker(conn, companies, admin)
-    # Import sits in the sidebar (a floating button covered page content)
-    if admin and st.sidebar.button("Import export", key="import_btn", icon=":material/upload_file:",
-                                   width="stretch", help="Upload a new export and run an audit"):
-        _import_dialog(conn)
-
     upload = None
     if slug != ALL_COMPANIES:
         uploads = repository.list_uploads(conn, source_client=slug)
         if uploads:
-            by_id = {u["id"]: u for u in uploads}
-            picked = st.session_state.get(f"audit_{slug}")
-            upload = by_id.get(picked, uploads[0])
+            upload = _audit_picker(slug, uploads)
+    if admin:
+        if st.sidebar.button("New company", icon=":material/add_business:", key="new_company", width="stretch",
+                             help="Create a new company"):
+            _new_company_dialog(conn)
+        # Import sits in the sidebar (a floating button covered page content)
+        if st.sidebar.button("Import", key="import_btn", icon=":material/upload_file:", width="stretch",
+                             help="Upload a new export and run an audit"):
+            _import_dialog(conn)
 
     navigation = _build_navigation(conn, slug, upload, admin)
     def review_progress() -> None:       # sits right under the Review pages
@@ -561,10 +573,24 @@ def _company_picker(conn, companies: list[dict], admin: bool) -> str:
         (f"{by_slug[k]['name']}  ·  {by_slug[k]['audit_count']} audit(s)" if by_slug[k]["kind"] == "real"
          else f"Evaluation workspace · {by_slug[k]['name']}"),
     )
-    if admin and st.sidebar.button("New company", icon=":material/add_business:", key="new_company",
-                                   width="stretch"):
-        _new_company_dialog(conn)
     return slug
+
+
+def _audit_picker(slug: str, uploads: list[dict]) -> dict:
+    """Sidebar, under the company: which audit is shown (latest by default)."""
+    by_id = {u["id"]: u for u in uploads}
+    key = f"audit_{slug}"
+    if st.session_state.get(key) not in by_id:
+        st.session_state[key] = uploads[0]["id"]
+    latest = uploads[0]["id"]
+
+    def label(i: int) -> str:
+        when = f"{(by_id[i]['data_as_of'] or by_id[i]['upload_date']):{DATE_FORMAT}}"
+        return f"Latest · {when} (#{i})" if i == latest else f"{when} (#{i})"
+
+    if not _is_participant():   # the study copy has a single audit
+        st.sidebar.selectbox("Audit", list(by_id), key=key, format_func=label)
+    return by_id[st.session_state[key]]
 
 
 @st.dialog("New company")
@@ -601,9 +627,8 @@ def _render_sidebar_nav(admin: bool, after_review=None) -> None:
 
 
 def _audit_bar(conn, slug: str) -> dict | None:
-    """Top-of-page context for one company: which audit is shown (latest by
-    default, older ones on request). None (with an empty state) if the
-    company has no audits yet."""
+    """Top-of-page context line for the audit picked in the sidebar. None (with
+    an empty state) if the company has no audits yet."""
     uploads = repository.list_uploads(conn, source_client=slug)
     name = client_label(slug)
     if not uploads:
@@ -614,24 +639,9 @@ def _audit_bar(conn, slug: str) -> dict | None:
             _import_dialog(conn)
         return None
     by_id = {u["id"]: u for u in uploads}
-    key = f"audit_{slug}"
-    if st.session_state.get(key) not in by_id:
-        st.session_state[key] = uploads[0]["id"]
-    latest = uploads[0]["id"]
-
-    def _label(i: int) -> str:
-        u = by_id[i]
-        when = f"{(u['data_as_of'] or u['upload_date']):%d %b %Y}"
-        return f"Latest · {when}  (#{i})" if i == latest else f"{when}  (#{i})"
-
-    if _is_participant():   # the study copy has a single audit
-        info, uid = st, st.session_state[key]
-    else:
-        info, pick = st.columns([3, 1.3], vertical_alignment="bottom")
-        uid = pick.selectbox("Audit", list(by_id), key=key, format_func=_label)
-    u = by_id[uid]
+    u = by_id.get(st.session_state.get(f"audit_{slug}"), uploads[0])   # picked in the sidebar
     reviewed = u["issue_count"] - u["pending_count"]
-    info.markdown(
+    st.markdown(
         f'<div class="context-line"><b>{html.escape(name)}</b> · {u["issue_count"]} issues · '
         f'{reviewed} reviewed · {u["row_count"]:,} rows audited</div>',
         unsafe_allow_html=True,
@@ -700,7 +710,7 @@ def _render_portfolio(conn) -> None:
                 'Pick a company in the sidebar (or below) to work on it.</div>', unsafe_allow_html=True)
     rows = _portfolio_rows(conn)
     if not rows:
-        st.info("No audits yet. Use **New company** in the sidebar, then **Import export** to run the first audit.")
+        st.info("No audits yet. Use **New company** in the sidebar, then **Import** to run the first audit.")
         return
 
     scores = [float(r["overall_score"]) for r in rows if r["overall_score"] is not None]
@@ -924,10 +934,14 @@ def _filter_bar(tables: list[str]) -> dict:
         ("fixable", "Fixable", ["yes", "no"], ALL),
     ]
 
+    tips = {"severity": "  \n".join(grouping.SEVERITY_HELP.values()),
+            "dimension": "  \n".join(f"**{grouping.type_label(d)}** ({d.replace('_', ' ')}): {h}"
+                                     for d, h in grouping.TYPE_HELP.items() if d != "accuracy")}
+
     def box(where, key, label, options, default):
         choices = [ALL, *options]
         return where.selectbox(
-            label, choices, index=choices.index(default), key=f"filter_{key}",
+            label, choices, index=choices.index(default), key=f"filter_{key}", help=tips.get(key),
             format_func=lambda v: "All" if v == ALL else FILTER_LABELS.get(
                 v, v if key == "table" else v.replace("_", " ").capitalize()),
         )
@@ -1051,7 +1065,7 @@ def _group_card(conn, item: dict, aliases: dict) -> None:
     meta = [f"{len(item['issues'])} issues"]
     if item["rows"]:
         meta.append(f"{item['rows']:,} rows in total")
-    labels = _pill(item["severity"].title(), color) + _pill("Rule", ui.BLUE)
+    labels = _severity_pill(item["severity"]) + _pill("Rule", ui.BLUE)
     key = hashlib.md5(item["key"].encode()).hexdigest()[:10]
     with st.container(key=f"grp_{key}"):
         st.markdown(
@@ -1827,19 +1841,41 @@ def _render_relationships(conn, upload: dict) -> None:
                 st.rerun()
 
 
+GUIDE = [   # first-visit guide: participants found the first 2-3 minutes confusing
+    ("Overview", "overview", "This page shows the data quality score and how many problems are waiting "
+                             "for you. You are here now."),
+    ("Triage", "triage", "Start with Fix now. Open an issue, read What was found and What to do, then "
+                         "choose Accept (a real problem), Reject (not a problem) or Unsure."),
+    ("Ask", "ask", "Ask any question about an issue in your own words, for example "
+                   "\"Is this a real problem?\" or \"How do I fix this?\"."),
+]
+
+
 def _welcome_card() -> None:
-    """First-visit guide for staff (participants have their task card instead)."""
+    """First-visit guide for staff in three steps (participants have their task card instead)."""
     if _is_participant() or st.session_state.get("welcome_seen"):
         return
+    step = min(st.session_state.get("welcome_step", 0), len(GUIDE) - 1)
+    title, page, text = GUIDE[step]
     with st.container(border=True, key="welcome_card"):
-        text, close = st.columns([6, 1], vertical_alignment="center")
-        text.markdown(
-            "**New here? Start with these 3 steps**  \n"
-            "1. **Overview** — the data quality score and what was found.  \n"
-            "2. **Triage → Fix now** — open each issue, read *What was found* and *What to do*, then "
-            "Accept (a real problem) or Reject (not a problem).  \n"
-            "3. **Ask** — ask any question about an issue in your own words.")
-        if close.button("Got it", key="welcome_close", width="stretch"):
+        st.markdown(f'<div class="guide-step">New here? Step {step + 1} of {len(GUIDE)}</div>'
+                    f'<div class="card-title">{html.escape(title)}</div>'
+                    f'<div class="guide-text">{html.escape(text)}</div>', unsafe_allow_html=True)
+        row = st.container(horizontal=True, gap="small", vertical_alignment="center")
+        if step and row.button("Back", key="welcome_back", icon=":material/arrow_back:"):
+            st.session_state["welcome_step"] = step - 1
+            st.rerun()
+        last = step == len(GUIDE) - 1
+        if row.button("Got it" if last else "Next", key="welcome_next", type="primary",
+                      icon=":material/check:" if last else ":material/arrow_forward:"):
+            if last:
+                st.session_state["welcome_seen"] = True
+            else:
+                st.session_state["welcome_step"] = step + 1
+            st.rerun()
+        if step and page in st.session_state.get("_pages", {}):
+            row.page_link(st.session_state["_pages"][page], label=f"Open {title}", icon=":material/open_in_new:")
+        if not last and row.button("Skip the guide", key="welcome_skip", type="tertiary"):
             st.session_state["welcome_seen"] = True
             st.rerun()
 
@@ -2291,7 +2327,7 @@ def _issue_pills(issue: dict, with_status: bool = True) -> str:
     pills = ""
     if issue.get("trend_status") in TREND_STYLE:
         pills += _pill(*TREND_STYLE[issue["trend_status"]])
-    pills += _pill(issue["severity"].title(), SEVERITY_COLOR.get(issue["severity"], ui.MUTED))
+    pills += _severity_pill(issue["severity"])
     pills += _pill(*SOURCE_STYLE.get(issue["source"], (issue["source"], ui.MUTED)))
     if with_status and issue["status"] != "flagged":
         label, color = ui.STATUS[issue["status"]]
@@ -2311,13 +2347,13 @@ def _issue_row(conn, issue: dict, aliases: dict) -> None:
     rows = issue.get("affected_row_count")
     if rows is None:
         rows = (issue.get("row_reference") or {}).get("count")
-    meta = [issue["dimension"].replace("_", " ").capitalize()]
+    meta = []
     if rows is not None:
         meta.append(f"{rows:,} row{'s' if rows != 1 else ''}")
     if issue.get("trend_status") in ("worsening", "improving"):
         meta.append("getting worse" if issue["trend_status"] == "worsening" else "improving")
     # small labels on top: severity and who found it (plus the decision, once made)
-    status = (_pill(issue["severity"].title(), sev_color)
+    status = (_severity_pill(issue["severity"])
               + _pill("AI" if issue["source"] == "llm" else "Rule", ui.LAVENDER if issue["source"] == "llm" else ui.BLUE))
     if issue["status"] != "flagged":
         label, color = ui.STATUS[issue["status"]]
@@ -2334,7 +2370,7 @@ def _issue_row(conn, issue: dict, aliases: dict) -> None:
   <div class="top"><span class="loc"><span class="dot" style="background:{sev_color}"></span>{_location_html(issue, aliases)}</span>
   <span class="pills">{status}</span></div>
   <div class="sum">{html.escape(show(issue["description"], issue["table_name"], aliases))}</div>
-  <div class="meta">{html.escape(" · ".join(meta))}</div>
+  <div class="meta">{_type_html(issue["dimension"])}{html.escape("".join(" · " + m for m in meta))}</div>
 </div>''',
         unsafe_allow_html=True,
     )
@@ -2366,7 +2402,7 @@ def _issue_dialog(conn, issue_id: int) -> None:
         f'''<div class="issue-card" style="--sev:{sev_color}">
   <div class="issue-head"><span class="issue-title">{_location_html(issue, aliases)}</span>
   <span class="pills">{_issue_pills(issue)}</span></div>
-  <div class="issue-meta">{html.escape(grouping.type_label(issue["dimension"]))}{" · " + fix if fix else ""}</div>
+  <div class="issue-meta">{_type_html(issue["dimension"])}{" · " + fix if fix else ""}</div>
   <div class="section-label">What was found</div>
   <div class="issue-desc">{html.escape(show(issue["description"], issue["table_name"], aliases))}</div>
   {f'<div class="section-label">What to do</div><div class="issue-rec">{html.escape(show(issue["recommendation"], issue["table_name"], aliases))}</div>'

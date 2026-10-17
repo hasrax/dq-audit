@@ -13,6 +13,7 @@ counted in the evaluation; this only decides what a reader sees first:
 """
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 
 UNUSED_NULL_PCT = 99.9        # empty in at least this share of rows -> an unused field
@@ -143,6 +144,51 @@ SEVERITY_HELP = {
 
 def type_help(dimension: str) -> str:
     return TYPE_HELP.get(dimension, "")
+
+
+# --- Relationships page: display hints for discovered links (detection unchanged) ---------
+
+_COL_N = re.compile(r"^col_\d+$")
+_SMALL_NUMBER = [   # (pattern on the source column's name, why it can match an ID by chance)
+    (re.compile(r"\b(qty|quantity|quantities)\b", re.I), "quantities are small numbers"),
+    (re.compile(r"\b(no\.? of|number of|count|items)\b", re.I), "item counts are small numbers"),
+    (re.compile(r"\b(order|line)\b", re.I), "line order is 1, 2, 3…"),
+]
+_ID_ENDING = re.compile(r"\b(no|number|code|id|ref)\.?$", re.I)   # "Order No" is an identifier, not a count
+LINK_GROUPS = {"same": "Same name on both sides", "careful": "Check carefully", "different": "Different names"}
+
+
+def link_group(child_name: str, parent_name: str) -> tuple[str, str]:
+    """('same' | 'careful' | 'different', reason) for a discovered link, from the column
+    names people see. 'careful': a count, quantity or line order "matched" an ID column."""
+    for rx, why in _SMALL_NUMBER:
+        if rx.search(child_name) and not _ID_ENDING.search(child_name):
+            return "careful", why
+    known = not _COL_N.match(child_name) and not _COL_N.match(parent_name)
+    if known and re.sub(r"[\W_]+", "", child_name).lower() == re.sub(r"[\W_]+", "", parent_name).lower():
+        return "same", "the same name on both sides"
+    return "different", ""
+
+
+def rule_uses(rules: list[dict]) -> dict[tuple, int]:
+    """How many cross-table rules use each link: {(child_table, child_col, parent_table, parent_col): n}."""
+    out: dict[tuple, int] = {}
+    for r in rules:
+        if r.get("template") == "cross_table_fk_orphan":
+            p = r.get("parameters") or {}
+            key = (r["table_name"], r["column_name"], p.get("parent_table"), p.get("parent_column"))
+            out[key] = out.get(key, 0) + 1
+    return out
+
+
+def link_disagrees(evidence: dict) -> bool:
+    """A cross-table rule whose two numbers disagree: most different values match
+    the linked key (>= 90%) but most rows do not (>= 50% unmatched)."""
+    try:
+        return (float(evidence.get("overlap_pct", 0)) >= 90
+                and int(evidence.get("orphan_count", 0)) >= 0.5 * int(evidence.get("row_count") or 0) > 0)
+    except (TypeError, ValueError):
+        return False
 
 
 def priority(issue: dict) -> tuple:

@@ -78,6 +78,6 @@ def plain(text: str | None) -> str:
     return _PCT.sub(_pct, text)
 
 
-def show(text: str | None, table: str, aliases: dict) -> str:
-    """Company column names (col_N -> name), then plain wording."""
-    return plain(named(text, table, aliases))
+def show(text: str | None, table: str, aliases: dict, with_code: bool = False) -> str:
+    """Company column names (col_N -> name, or "Name (col_N)" with_code), then plain wording."""
+    return plain(named(text, table, aliases, with_code=with_code))

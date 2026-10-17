@@ -1,39 +1,42 @@
-# Calm theme in two modes; viewers switch with the menu (⋮ > Settings).
-# Colour carries meaning (see dashboard/theme.py): sage = good,
-# mustard = warning, coral = high severity, lavender = AI, blue = rules.
-# Accent shades differ per mode so text keeps AA contrast.
+# ClarityDQ theme (design canvas "ClarityDQ UI redesign", style sheet board, 17-18 Oct 2026).
+# Dark is the default; each person can choose Light or Match my device in Settings →
+# Appearance (the app writes the choice into the browser, see _apply_appearance).
+# Colour carries meaning (dashboard/theme.py): green = good, mustard = waiting,
+# coral = high severity, lavender = AI, blue = rules. Primary buttons are mint with dark
+# text in both themes (CSS); in light, links, checkboxes and focus rings are dark green
+# because mint on white is too faint.
 
 [theme]
 font = "sans-serif"
 baseFontSize = 16
-baseRadius = "large"
+baseRadius = "0.5rem"
 showWidgetBorder = true
 
 [theme.dark]
-primaryColor = "#8FC9B4"
-backgroundColor = "#16181D"
-secondaryBackgroundColor = "#272B34"
-textColor = "#EEF0F4"
-linkColor = "#86AEF7"
-borderColor = "#343A46"
+primaryColor = "#7FCCA4"
+backgroundColor = "#121416"
+secondaryBackgroundColor = "#1B1E21"
+textColor = "#ECEBE8"
+linkColor = "#7FCCA4"
+borderColor = "#2D3136"
 
 [theme.dark.sidebar]
-backgroundColor = "#1A1C22"
-secondaryBackgroundColor = "#272B34"
+backgroundColor = "#1B1E21"
+secondaryBackgroundColor = "#22262B"
 
 [theme.light]
-primaryColor = "#286B55"
-backgroundColor = "#F7F6F2"
-secondaryBackgroundColor = "#EFEDE6"
-textColor = "#1E2127"
-linkColor = "#2B5CB8"
-borderColor = "#E3E0D7"
+primaryColor = "#2F6F55"
+backgroundColor = "#F7F6F3"
+secondaryBackgroundColor = "#F2F0EB"
+textColor = "#1C1B19"
+linkColor = "#2F6F55"
+borderColor = "#E4E2DC"
 greenTextColor = "#1E6B34"   # AA contrast on its tinted background (17 Oct 2026 check)
-grayTextColor = "#5F6470"    # :gray[...] text, e.g. the role under the user name
+grayTextColor = "#5C5A55"    # :gray[...] text, e.g. the role under the user name
 
 [theme.light.sidebar]
-backgroundColor = "#F1EFE9"
-secondaryBackgroundColor = "#E8E5DC"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F2F0EB"
 
 [client]
 toolbarMode = "viewer"

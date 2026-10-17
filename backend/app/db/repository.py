@@ -361,6 +361,7 @@ def fetch_score_trend(conn: psycopg.Connection, source_client: str) -> list[dict
     with conn.cursor(row_factory=dict_row) as cur:
         return cur.execute(
             "SELECT u.id AS upload_id, u.upload_date, u.source_client, "
+            "COALESCE(u.data_as_of, u.upload_date::date) AS as_of, "
             "s.overall_score, s.completeness_score, s.validity_score, "
             "s.consistency_score, s.uniqueness_score, s.timeliness_score, "
             "s.cross_table_score "

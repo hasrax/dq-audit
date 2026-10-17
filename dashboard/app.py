@@ -935,8 +935,7 @@ def _filter_bar(tables: list[str]) -> dict:
     cols = st.columns([1, 1, 1.4, 1.1], vertical_alignment="bottom")
     filters = {spec[0]: box(col, *spec) for col, spec in zip(cols, main)}
     active = sum(st.session_state.get(f"filter_{k}", ALL) != ALL for k, *_ in more)
-    with cols[3].popover(f"More filters ({active})" if active else "More filters", icon=":material/tune:",
-                         width="stretch"):
+    with cols[3].popover(f"More filters ({active})" if active else "More filters", width="stretch"):
         filters.update({spec[0]: box(st, *spec) for spec in more})
     return filters
 
@@ -1428,10 +1427,15 @@ def _render_evaluation(conn, upload: dict | None) -> None:
                 if sub:
                     fig.add_bar(y=[r["dimension"].replace("_", " ") for r in sub], x=[r["precision"] * 100 for r in sub],
                                 orientation="h", name=name, marker_color=color,
+                                # value labels: a 0% bar must not look like "no data"
+                                text=[f"{r['precision'] * 100:.0f}% (n={r['accepted'] + r['rejected']})" for r in sub],
+                                textposition="outside", cliponaxis=False, textfont=dict(color=ui.TEXT, size=12),
                                 customdata=[r["accepted"] + r["rejected"] for r in sub],
                                 hovertemplate=name + " · %{y}: %{x:.0f}% of %{customdata} decisions<extra></extra>")
             fig.update_layout(barmode="group", showlegend=True, legend=dict(orientation="h", y=-0.15))
-            fig.update_xaxes(range=[0, 100], ticksuffix="%")
+            fig.update_xaxes(range=[0, 125], tickvals=[0, 25, 50, 75, 100],
+                             ticktext=["0%", "25%", "50%", "75%", "100%"])
+            fig.add_vline(x=100, line=dict(color=ui.MUTED, width=1, dash="dot"))
             st.plotly_chart(ui.style_figure(fig, 280).update_layout(showlegend=True), config={"displayModeBar": False},
                             width="stretch", key="eval_prec_dim")
         else:
@@ -1875,7 +1879,7 @@ def _render_overview(conn, upload: dict) -> None:
         return
 
     left, right = st.columns([1, 2])
-    with left.container(border=True):
+    with left.container(border=True, height=450):   # both panels in this row the same height
         st.markdown('<div class="card-title">Issues by severity</div>', unsafe_allow_html=True)
         order = ["high", "medium", "low"]
         st.plotly_chart(
@@ -1889,18 +1893,11 @@ def _render_overview(conn, upload: dict) -> None:
                     for o, c in zip(order, [ui.CORAL, ui.MUSTARD, ui.MUTED])),
             unsafe_allow_html=True,
         )
-    with right.container(border=True):
+    with right.container(border=True, height=450):
         trend = repository.fetch_score_trend(conn, upload["source_client"])
         if len(trend) >= 2:
             st.markdown('<div class="card-title">Data quality score over time</div>', unsafe_allow_html=True)
-            fig = go.Figure(go.Scatter(
-                x=[f"#{r['upload_id']}" for r in trend], y=[float(r["overall_score"]) for r in trend],
-                mode="lines+markers", line=dict(color=ui.SAGE, width=3, shape="spline"),
-                marker=dict(size=8, color=ui.SAGE), fill="tozeroy", fillcolor="rgba(143,201,180,0.12)",
-                hovertemplate="Audit %{x}: %{y:.0f}/100<extra></extra>",
-            ))
-            fig.update_yaxes(range=[0, 100])
-            fig.update_xaxes(type="category", title_text="audit")
+            fig = _score_trend_figure(trend)
         else:
             st.markdown('<div class="card-title">Issues by dimension</div>', unsafe_allow_html=True)
             by_dim = Counter(DIMENSION_ALIASES.get(i["dimension"], i["dimension"]) for i in issues)
@@ -2075,6 +2072,25 @@ def _render_upload(conn, in_dialog: bool = False) -> None:
         st.rerun()
 
 
+def _score_trend_figure(trend: list[dict]) -> go.Figure:
+    """Score per audit with the data date on the x-axis (audit number only when two audits share a date)."""
+    trend = sorted(trend, key=lambda r: (r["as_of"], r["upload_id"]))
+    days = Counter(r["as_of"] for r in trend)
+    fmt = "%d %b" if len({r["as_of"].year for r in trend}) == 1 else DATE_FORMAT   # the year once, in the title
+    labels = [f"{r['as_of']:{fmt}}" + (f" #{r['upload_id']}" if days[r["as_of"]] > 1 else "") for r in trend]
+    fig = go.Figure(go.Scatter(
+        x=labels, y=[float(r["overall_score"]) for r in trend],
+        mode="lines+markers", line=dict(color=ui.SAGE, width=3, shape="spline"),
+        marker=dict(size=8, color=ui.SAGE), fill="tozeroy", fillcolor=ui._rgba(ui.SAGE, .10),
+        customdata=[r["upload_id"] for r in trend],
+        hovertemplate="%{x} · audit #%{customdata}: %{y:.0f}/100<extra></extra>",
+    ))
+    fig.update_yaxes(range=[0, 100])
+    year = f" ({trend[0]['as_of']:%Y})" if fmt != DATE_FORMAT else ""
+    fig.update_xaxes(type="category", title_text=f"data as of{year}")
+    return fig
+
+
 def _render_scores(conn, upload: dict) -> None:
     # Recompute live so the score reflects current triage (rejected issues
     # are excluded); this also refreshes the stored value for the trend.
@@ -2120,10 +2136,8 @@ def _render_scores(conn, upload: dict) -> None:
     st.markdown("#### Trend across uploads")
     trend = repository.fetch_score_trend(conn, upload["source_client"])
     if len(trend) >= 2:
-        df = pd.DataFrame(
-            [{"upload": f"#{r['upload_id']}", "DQ score": float(r["overall_score"])} for r in trend]
-        ).set_index("upload")
-        st.line_chart(df, y="DQ score", color=ui.BLUE)
+        st.plotly_chart(ui.style_figure(_score_trend_figure(trend), height=300), config={"displayModeBar": False},
+                        width="stretch", key="scores_trend")
     else:
         st.caption(
             f"Only one scored audit for **{client_label(upload['source_client'])}** so far. The trend line "

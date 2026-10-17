@@ -160,7 +160,7 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 [data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"] {{ background: var(--surface); }}
 
 .kpi {{ background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 16px;
-  min-height: 118px; height: 100%; }}
+  min-height: 118px; height: 100%; margin-bottom: 16px; }}   /* 16 px between the KPI row and the panels */
 .kpi-label {{ font-size: .875rem; color: var(--muted); }}
 .kpi-value {{ font-size: 2.2rem; font-weight: 750; line-height: 1.15; margin-top: 4px; letter-spacing: -0.5px; }}
 .kpi-caption {{ font-size: .875rem; color: var(--muted); margin-top: 4px; }}

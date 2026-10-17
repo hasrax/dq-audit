@@ -39,8 +39,6 @@ from app.db import repository
 from app.db.persist import persist_audit
 import json
 
-from app.eval.complementarity import real_complementarity
-from app.eval.figures import figure_png_bytes
 from app.eval.triage_metrics import compute_triage_metrics
 from app.export import issues_to_csv, issues_to_xlsx, score_to_csv
 from app.llm.run_audit import audit_directory
@@ -324,6 +322,10 @@ def main() -> None:
     # study / test / replay copies are for admins only, and clearly labelled
     companies = ws.list_workspaces(conn, kinds=ws.KINDS if admin else ("real",))
     slug = _company_picker(conn, companies, admin)
+    # Import sits in the sidebar (a floating button covered page content)
+    if admin and st.sidebar.button("Import export", key="import_btn", icon=":material/upload_file:",
+                                   width="stretch", help="Upload a new export and run an audit"):
+        _import_dialog(conn)
 
     upload = None
     if slug != ALL_COMPANIES:
@@ -348,10 +350,6 @@ def main() -> None:
 
     if st.session_state.get("flash"):
         st.toast(st.session_state.pop("flash"), icon=":material/check_circle:")
-    # floating import action; not on Ask, where it would cover the message box
-    if admin and navigation.url_path != "ask" and st.button("＋  Import", key="fab",
-                                                            help="Upload a new export and run an audit"):
-        _import_dialog(conn)
     navigation.run()
 
 
@@ -702,7 +700,7 @@ def _render_portfolio(conn) -> None:
                 'Pick a company in the sidebar (or below) to work on it.</div>', unsafe_allow_html=True)
     rows = _portfolio_rows(conn)
     if not rows:
-        st.info("No audits yet. Use **New company** in the sidebar, then **＋ Import** to run the first audit.")
+        st.info("No audits yet. Use **New company** in the sidebar, then **Import export** to run the first audit.")
         return
 
     scores = [float(r["overall_score"]) for r in rows if r["overall_score"] is not None]
@@ -1451,7 +1449,7 @@ def _render_evaluation(conn, upload: dict | None) -> None:
         if pe["n"]:
             st.markdown(ui.kpi_card("Typical prediction error", f"{pe['median_ape']:.1f}%",
                                     f"median over {pe['n']} predictions of changing issues, checked against the next audit "
-                                    f"(mean {pe['mean_ape']:.1f}%)", ui.SAGE), unsafe_allow_html=True)
+                                    f"(mean {pe['mean_ape']:.1f}%)", ui.SAGE, inside_panel=True), unsafe_allow_html=True)
         else:
             st.markdown('<div class="card-sub">Predictions are checked when the next audit arrives '
                         '(needs 4+ audits of a company).</div>', unsafe_allow_html=True)
@@ -2015,6 +2013,9 @@ def _render_upload(conn, in_dialog: bool = False) -> None:
                              value=False, key=f"imp_docs_{in_dialog}")
 
     ready = bool(files) and (picked != NEW_COMPANY or bool(new_name))
+    if not ready:
+        st.caption("Add the export files" + ("" if picked != NEW_COMPANY or new_name else " and a company name")
+                   + " to run the audit.")
     if st.button("Run audit", type="primary", disabled=not ready, icon=":material/play_arrow:",
                  key=f"imp_run_{in_dialog}"):
         try:
@@ -2090,80 +2091,14 @@ def _render_scores(conn, upload: dict) -> None:
         st.line_chart(df, y="DQ score", color=ui.BLUE)
     else:
         st.caption(
-            f"Only one scored upload for **{client_label(upload['source_client'])}** so far — "
-            "the trend line appears once another upload for this client is audited "
-            "(e.g. a later export, or re-auditing after fixes)."
+            f"Only one scored audit for **{client_label(upload['source_client'])}** so far. The trend line "
+            "appears once another export for this company is audited (for example after fixes)."
         )
 
-    _render_triage_metrics(conn, upload)
-    _render_complementarity(conn, upload)
-
-
-def _render_complementarity(conn, upload: dict) -> None:
-    st.markdown("#### Rule–LLM complementarity (E2)")
-    comp = real_complementarity(repository.fetch_issues(conn, upload["id"]))
-    if comp["n_locations"] == 0:
-        st.caption("No issues to analyse yet.")
-        return
-
-    o = comp["overall"]
-    c1, c2, c3 = st.columns(3)
-    c1.metric("⚙️ Rule-only", f"{o['rule_only']}", f"{o['rule_only_pct']}%")
-    c2.metric("🤖 LLM-only", f"{o['llm_only']}", f"{o['llm_only_pct']}%")
-    c3.metric("🔗 Both", f"{o['both']}", f"{o['both_pct']}%")
-    st.caption(
-        f"{comp['n_locations']} distinct issue locations. A low **Both** share means "
-        "the rules and the LLM catch *different* problems — complementary, not redundant."
-    )
-
-    by_dim = comp["by_dimension"]
-    if by_dim:
-        df = pd.DataFrame(
-            [
-                {"dimension": d, "Rule only": v["rule_only"], "LLM only": v["llm_only"], "Both": v["both"]}
-                for d, v in by_dim.items()
-            ]
-        ).set_index("dimension")
-        st.bar_chart(df, color=["#2563eb", "#7c3aed", "#14b8a6"], horizontal=True, stack=True)
-
-        st.download_button(
-            "⬇️ Download figure (PNG, for the dissertation)",
-            data=_e2_figure_png(json.dumps(by_dim, sort_keys=True),
-                                f"Rule–LLM complementarity — {client_label(upload['source_client'])}"),
-            file_name=f"complementarity_{client_label(upload['source_client']).replace(' ', '_')}.png",
-            mime="image/png",
-        )
-
-
-@st.cache_data(show_spinner=False)
-def _e2_figure_png(by_dim_json: str, title: str) -> bytes:
-    return figure_png_bytes(json.loads(by_dim_json), title)
-
-
-def _pct_or_dash(value) -> str:
-    return "—" if value is None else f"{value * 100:.0f}%"
-
-
-def _render_triage_metrics(conn, upload: dict) -> None:
-    st.markdown("#### Triage-derived metrics (E3)")
-    tm = compute_triage_metrics(repository.fetch_issues(conn, upload["id"]))
-    if tm["reviewed"] == 0:
-        st.caption("No issues triaged yet — accept/reject/consider issues in the Triage tab to populate these.")
-        return
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Empirical precision", _pct_or_dash(tm["empirical_precision"]))
-    c2.metric("Rule precision", _pct_or_dash(tm["by_source"]["rule"]["empirical_precision"]))
-    c3.metric("LLM hallucination", _pct_or_dash(tm["hallucination_rate"]))
-    c4.metric("Ambiguity", _pct_or_dash(tm["ambiguity_rate"]))
-    st.caption(
-        f"{tm['reviewed']} of {tm['total']} issues reviewed. "
-        "Precision counts only accept-vs-reject decisions (target ≥ 80%)."
-    )
 
 
 def _render_dimension_breakdown(conn, upload: dict, score: dict) -> None:
-    st.markdown("#### By dimension — click to see what drives each score")
+    st.markdown("#### By dimension: open one to see what drives its score")
     aliases = _aliases(conn, upload["source_client"])
     # Only non-rejected issues count toward the score, so only they are shown.
     scored_issues = [i for i in repository.fetch_issues(conn, upload["id"]) if i.get("status") != "rejected"]
@@ -2179,7 +2114,7 @@ def _render_dimension_breakdown(conn, upload: dict, score: dict) -> None:
         dim_issues = by_dim.get(dim, [])
         badge = "🟢" if sub >= SCORE_GOOD else ("🟠" if sub >= SCORE_WARN else "🔴")
 
-        with st.expander(f"{badge}  {label} — {sub:.0f}/100  ·  {len(dim_issues)} issue(s)"):
+        with st.expander(f"{badge}  {label}: {sub:.0f}/100  ·  {len(dim_issues)} issue(s)"):
             st.markdown(_meter(label, sub), unsafe_allow_html=True)
             sev = Counter(i["severity"] for i in dim_issues)
             penalty = sum(SEVERITY_POINTS.get(i["severity"], 1) for i in dim_issues)
@@ -2196,11 +2131,11 @@ def _render_dimension_breakdown(conn, upload: dict, score: dict) -> None:
                                 "." + display_columns(aliases, i["table_name"], i["column_name"])
                                 if i["column_name"] else ""
                             ),
-                            "Severity": i["severity"],
-                            "Source": i["source"],
-                            "Fixable": i.get("fixable") or "",
-                            "Status": i.get("status"),
-                            "What was found": (i.get("description") or "")[:200],
+                            "Severity": i["severity"].title(),
+                            "Found by": "AI" if i["source"] == "llm" else "Rule",
+                            "Fixable": (i.get("fixable") or "").title(),
+                            "Status": ui.STATUS.get(i.get("status"), (i.get("status"),))[0],
+                            "What was found": show(i.get("description"), i["table_name"], aliases)[:200],
                         }
                         for i in sorted(dim_issues, key=lambda x: {"high": 0, "medium": 1, "low": 2}.get(x["severity"], 3))
                     ],
@@ -2208,7 +2143,7 @@ def _render_dimension_breakdown(conn, upload: dict, score: dict) -> None:
                     hide_index=True,
                 )
             else:
-                st.caption("No issues in this dimension — it scores a perfect 100.")
+                st.caption("No issues in this dimension, so it scores a perfect 100.")
 
 
 def _meter(label: str, value: float) -> str:

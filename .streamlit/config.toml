@@ -22,12 +22,14 @@ backgroundColor = "#1A1C22"
 secondaryBackgroundColor = "#272B34"
 
 [theme.light]
-primaryColor = "#2E7D63"
+primaryColor = "#286B55"
 backgroundColor = "#F7F6F2"
 secondaryBackgroundColor = "#EFEDE6"
 textColor = "#1E2127"
-linkColor = "#2F64C8"
+linkColor = "#2B5CB8"
 borderColor = "#E3E0D7"
+greenTextColor = "#1E6B34"   # AA contrast on its tinted background (17 Oct 2026 check)
+grayTextColor = "#5F6470"    # :gray[...] text, e.g. the role under the user name
 
 [theme.light.sidebar]
 backgroundColor = "#F1EFE9"

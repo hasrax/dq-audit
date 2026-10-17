@@ -9,7 +9,9 @@ WCAG AA contrast):
     lavender  AI-detected (Type 2)
     blue      rules (Type 1) and actions
 Pills are soft (tinted background + coloured text) rather than solid,
-which reads calmer on dark and keeps text contrast high.
+which reads calmer on dark and keeps text contrast high. Light-mode text
+colours were deepened on 17 Oct 2026 so each meets WCAG AA (4.5:1) on all
+light surfaces and on its own pill tint (checked with Impeccable).
 """
 from __future__ import annotations
 
@@ -23,8 +25,8 @@ PALETTES = {
                  SAGE="#8FC9B4", MUSTARD="#F1C76E", CORAL="#F39A85", LAVENDER="#B7ABF4", BLUE="#86AEF7",
                  ON_ACCENT="#0B1210", GLOW=0.08, BRAND_A="#8FC9B4", BRAND_B="#B7ABF4"),
     "light": dict(BG="#F7F6F2", SURFACE="#FFFFFF", SURFACE_2="#F1EFE9", BORDER="#E3E0D7",
-                  TEXT="#1E2127", MUTED="#5B6270", FAINT="#8A909C",
-                  SAGE="#2E7D63", MUSTARD="#94650A", CORAL="#C2412D", LAVENDER="#6A55C9", BLUE="#2F64C8",
+                  TEXT="#1E2127", MUTED="#4E5562", FAINT="#5F6470",
+                  SAGE="#286B55", MUSTARD="#825909", CORAL="#AB3928", LAVENDER="#624EB9", BLUE="#2B5CB8",
                   ON_ACCENT="#FFFFFF", GLOW=0.10, BRAND_A="#2E8B6E", BRAND_B="#5A55D2"),
 }
 MODE = "dark"
@@ -56,7 +58,7 @@ def apply(mode: str | None) -> str:
     TREND.update({"new": ("New", BLUE), "worsening": ("▲ Getting worse", CORAL)})
     STATUS.clear()
     STATUS.update({"flagged": ("To review", MUTED), "accepted": ("Accepted", SAGE),
-                   "rejected": ("Rejected", CORAL), "considered": ("Considered", MUSTARD)})
+                   "rejected": ("Rejected", CORAL), "considered": ("Unsure", MUSTARD)})   # = the dialog button
     return MODE
 
 
@@ -69,14 +71,14 @@ def _rgba(hex_color: str, alpha: float) -> str:
 
 
 def pill(text: str, color: str) -> str:
-    return (f'<span class="pill" style="color:{color};background:{_rgba(color, .14)};'
-            f'border-color:{_rgba(color, .38)}">{html.escape(text)}</span>')
+    return (f'<span class="pill" style="color:{color};background:{_rgba(color, .10)};'
+            f'border-color:{_rgba(color, .32)}">{html.escape(text)}</span>')
 
 
-def kpi_card(label: str, value: str, caption: str, color: str) -> str:
-    """Gradient score card in the spirit of the reference dashboards."""
-    return f'''<div class="kpi" style="background:linear-gradient(135deg,{_rgba(color, .30)} 0%,{_rgba(color, .08)} 70%);
-  border-color:{_rgba(color, .45)}">
+def kpi_card(label: str, value: str, caption: str, color: str, inside_panel: bool = False) -> str:
+    """Flat KPI tile: plain surface and 1 px border; colour only on the number.
+    inside_panel: no border of its own (a card inside a card is visual noise)."""
+    return f'''<div class="kpi{' kpi-in-panel' if inside_panel else ''}">
   <div class="kpi-label">{html.escape(label)}</div>
   <div class="kpi-value" style="color:{color}">{html.escape(value)}</div>
   <div class="kpi-caption">{html.escape(caption)}</div>
@@ -115,12 +117,13 @@ def css() -> str:
   --text:{TEXT}; --muted:{MUTED}; --faint:{FAINT};
   --sage:{SAGE}; --mustard:{MUSTARD}; --coral:{CORAL}; --lavender:{LAVENDER}; --blue:{BLUE};
 }}
-.stApp {{ background: radial-gradient(1200px 600px at 100% 110%, {_rgba(SAGE, GLOW)}, transparent 60%), var(--bg); }}
+.stApp {{ background: var(--bg); }}
 [data-testid="stMainBlockContainer"] {{ padding-top: 2.4rem; padding-bottom: 5rem; max-width: 1320px; }}
-[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] {{ gap: 1.15rem; }}
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] {{ gap: 1rem; }}   /* 16 px */
+::placeholder {{ color: var(--muted) !important; opacity: 1 !important; }}
 p, li {{ line-height: 1.6; }}
-[data-testid="stSidebar"] .sidebar-section {{ font-size: .72rem; font-weight: 700; letter-spacing: .6px;
-  text-transform: uppercase; color: var(--faint); margin: 14px 0 2px 4px; }}
+[data-testid="stSidebar"] .sidebar-section {{ font-size: .75rem; font-weight: 700; letter-spacing: .6px;
+  text-transform: uppercase; color: var(--faint); margin: 16px 0 4px 4px; }}
 [data-testid="stSidebar"] [data-testid="stPageLink"] a {{ padding: 6px 10px; border-radius: 10px; }}
 .st-key-review_progress {{ margin: 2px 0 4px 0; padding: 8px 12px; border: 1px solid var(--border);
   border-radius: 12px; background: var(--surface); }}
@@ -128,7 +131,7 @@ p, li {{ line-height: 1.6; }}
 .st-key-review_progress [data-testid="stMetricLabel"] p {{ font-size: .78rem; color: var(--muted); }}
 .company-card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px 14px 20px; }}
 .company-card .cname {{ font-size: 1.15rem; font-weight: 700; color: var(--text); }}
-.company-card .cmeta {{ font-size: .86rem; color: var(--muted); margin-top: 2px; }}
+.company-card .cmeta {{ font-size: .875rem; color: var(--muted); margin-top: 4px; }}
 .company-card .cscore {{ font-size: 2.3rem; font-weight: 750; line-height: 1.1; margin-top: 12px; }}
 .company-card .cstats {{ display:flex; gap:18px; margin-top: 10px; font-size: .88rem; color: var(--muted); }}
 .company-card .cstats b {{ color: var(--text); font-size: 1rem; }}
@@ -147,20 +150,26 @@ h1, h2, h3, h4, h5 {{ letter-spacing: 0.1px; }}
 /* cards */
 .card {{ background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; }}
 .card-title {{ font-size: 1.08rem; font-weight: 650; color: var(--text); margin-bottom: 8px; }}
-.card-sub {{ font-size: .84rem; color: var(--muted); }}
+.card-sub {{ font-size: .875rem; color: var(--muted); }}
 [data-testid="stVerticalBlockBorderWrapper"] {{ border-radius: 16px; }}
 div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 [data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"] {{ background: var(--surface); }}
 
-.kpi {{ border: 1px solid; border-radius: 16px; padding: 16px 18px 14px 18px; min-height: 118px; }}
-.kpi-label {{ font-size: .86rem; color: var(--muted); }}
-.kpi-value {{ font-size: 2.2rem; font-weight: 750; line-height: 1.15; margin-top: 6px; letter-spacing: -0.5px; }}
-.kpi-caption {{ font-size: .8rem; color: var(--muted); margin-top: 4px; }}
+.kpi {{ background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 16px;
+  min-height: 118px; height: 100%; }}
+.kpi-label {{ font-size: .875rem; color: var(--muted); }}
+.kpi-value {{ font-size: 2.2rem; font-weight: 750; line-height: 1.15; margin-top: 4px; letter-spacing: -0.5px; }}
+.kpi-caption {{ font-size: .875rem; color: var(--muted); margin-top: 4px; }}
+/* a KPI inside a bordered panel is not a second card */
+.kpi.kpi-in-panel {{ border: none; padding: 4px 0; min-height: 0; background: transparent; }}
+/* Streamlit's captions and grey text: AA contrast (17 Oct 2026 check) */
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {{ color: var(--muted) !important;
+  opacity: 1 !important; }}
 
 .pills {{ display:flex; gap:6px; flex-wrap:wrap; }}
 .pill {{ display:inline-block; padding: 2px 10px; border-radius: 999px; border: 1px solid;
-        font-size: .74rem; font-weight: 650; white-space: nowrap; letter-spacing: .2px; }}
-.pill-outline {{ display:inline-block; padding: 2px 10px; border-radius: 999px; font-size: .74rem;
+        font-size: .8rem; font-weight: 650; white-space: nowrap; letter-spacing: .2px; }}
+.pill-outline {{ display:inline-block; padding: 2px 10px; border-radius: 999px; font-size: .8rem;
         font-weight: 600; color: var(--muted); border: 1px solid var(--border); background: transparent; }}
 
 /* issue table (dashboard) */
@@ -176,15 +185,16 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 .itable .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
 
 /* issue cards (triage) */
-.issue-card {{ background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--sev, {MUTED});
-  border-radius: 14px; padding: 14px 18px 12px 18px; margin: 4px 0 6px 0; }}
+.issue-card {{ background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; margin: 4px 0 8px 0; }}
+[role="dialog"] .issue-card {{ border: none; background: transparent; padding: 0; }}   /* no card inside the dialog */
 .issue-head {{ display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }}
 .issue-title {{ font-size: 1.04rem; font-weight: 700; color: var(--text); }}
 .issue-title .col {{ font-weight: 500; color: var(--muted); }}
 .issue-desc {{ margin-top: 8px; font-size: 1rem; line-height: 1.55; color: var(--text); }}
 .issue-rec {{ margin-top: 10px; font-size: .93rem; line-height: 1.5; color: var(--text);
   background: var(--surface-2); border-radius: 8px; padding: 8px 12px; }}
-.issue-meta {{ margin-top: 8px; font-size: .82rem; color: var(--muted); }}
+.issue-meta {{ margin-top: 8px; font-size: .875rem; color: var(--muted); }}
 .issue-trend {{ margin-top: 8px; font-size: .88rem; line-height: 1.5; color: var(--text); }}
 .issue-trend .est {{ color: var(--muted); font-style: italic; }}
 
@@ -195,8 +205,7 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 [class*="st-key-thread_"] button p {{ text-align: left; }}
 
 /* compact issue rows (triage list) */
-.issue-row {{ background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--sev, {MUTED});
-  border-radius: 12px; padding: 10px 14px; }}
+.issue-row {{ background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; }}
 .issue-row .top {{ display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }}
 .issue-row .loc {{ font-weight: 700; color: var(--text); }}
 .issue-row .loc .col {{ font-weight: 500; color: var(--muted); }}
@@ -205,16 +214,16 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 .issue-row .dot {{ display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 9px;
   vertical-align: middle; }}
 .group-card {{ box-shadow: 4px 4px 0 -1px var(--surface-2), 4px 4px 0 0 var(--border); }}
-.issue-row .meta {{ margin-top: 3px; color: var(--faint); font-size: .8rem; }}
-.section-label {{ font-size: .78rem; text-transform: uppercase; letter-spacing: .5px; color: var(--faint);
+.issue-row .meta {{ margin-top: 4px; color: var(--faint); font-size: .875rem; }}
+.section-label {{ font-size: .8rem; text-transform: uppercase; letter-spacing: .5px; color: var(--faint);
   margin: 14px 0 4px 0; font-weight: 650; }}
 .decision-gap {{ height: 12px; }}   /* issue dialog: Accept / Reject / Unsure line up with the note box */
 
-.rule-card {{ background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent, {SAGE});
-  border-radius: 14px; padding: 12px 16px 10px 16px; margin: 0 0 4px 0; }}
+.rule-card {{ background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 12px 16px; margin: 0 0 4px 0; }}
 .rule-what {{ font-size: 1rem; font-weight: 650; line-height: 1.45; margin-top: 6px; color: var(--text); }}
 .rule-why {{ margin-top: 4px; font-size: .93rem; line-height: 1.5; color: var(--muted); }}
-.rule-ev {{ margin-top: 6px; font-size: .8rem; color: var(--faint); }}
+.rule-ev {{ margin-top: 8px; font-size: .875rem; color: var(--faint); }}
 
 .context-line {{ font-size: .92rem; color: var(--muted); margin: -4px 0 10px 0; }}
 .context-line b {{ color: var(--text); }}
@@ -297,18 +306,13 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
   [data-testid="stLayoutWrapper"]:has(> .st-key-chat_threads) {{ height: auto !important; max-height: 132px;
     min-height: 0; }}
   .st-key-chat_scroll {{ height: 62vh !important; min-height: 300px; }}
-  .st-key-fab {{ right: 16px; bottom: 16px; }}
 }}
-
-/* floating "+ Import" action */
-.st-key-fab {{ position: fixed; right: 34px; bottom: 30px; z-index: 1000; width: auto; }}
-.st-key-fab button {{ border-radius: 999px; padding: 10px 22px; font-weight: 700;
-  background: linear-gradient(135deg, {SAGE}, {BLUE}); color: {ON_ACCENT}; border: none;
-  box-shadow: 0 10px 30px {_rgba(SAGE, .35)}; }}
-.st-key-fab button:hover {{ filter: brightness(1.08); color: {ON_ACCENT}; }}
 
 /* primary buttons: text colour that reads on the sage primary in both modes */
 button[data-testid^="stBaseButton-primary"]:not(:disabled),
 button[data-testid^="stBaseButton-primary"]:not(:disabled) p {{ color: {ON_ACCENT} !important; font-weight: 650; }}
+/* a disabled button stays readable (the caption above it says what is missing) */
+button[data-testid^="stBaseButton"]:disabled, button[data-testid^="stBaseButton"]:disabled p {{
+  color: var(--muted) !important; opacity: 1 !important; }}
 </style>
 """

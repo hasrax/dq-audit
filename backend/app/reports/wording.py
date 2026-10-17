@@ -38,7 +38,7 @@ _WORDS = [
 
 def _pct(m: re.Match) -> str:
     v = float(m.group(1))
-    if 99.95 <= v < 100:
+    if v >= 99.95:   # "100.00%" was rounded (an exact 100 is written "100%"), so it may hide a few rows
         return "over 99.9%"
     if 0 < v < 0.05:
         return "under 0.1%"

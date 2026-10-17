@@ -1177,102 +1177,127 @@ GENERAL_STARTERS = [
     "Explain the data quality score in simple terms.",
 ]
 ISSUE_STARTERS = [
-    "Explain these issues in simple terms.",
-    "Why do they matter for the business?",
-    "How should we fix them, step by step?",
+    "Is this a real problem?",
+    "Which rows are affected?",
+    "How do I fix this?",
+    "Show example rows",
 ]
 
 
 def _issue_option_label(issue: dict, aliases: dict) -> str:
     col = display_columns(aliases, issue["table_name"], issue["column_name"])
-    where = issue["table_name"] + (f".{col}" if col else "")
-    return f"#{issue['id']} · {where} · {issue['dimension'].replace('_', ' ')} · {issue['severity']}"
+    where = issue["table_name"] + (f" · {col}" if col else "")
+    return f"#{issue['id']} · {where} · {grouping.type_label(issue['dimension'])} · {issue['severity'].title()}"
 
 
 def _open_issue_thread(conn, issue: dict, aliases: dict) -> None:
     """Start a thread about one issue and make it the active one."""
     col = display_columns(aliases, issue["table_name"], issue["column_name"])
-    title = f"Issue #{issue['id']} · {issue['table_name']}" + (f".{col}" if col else "")
+    title = f"Issue #{issue['id']} · {issue['table_name']}" + (f" · {col}" if col else "")
     tid = chat_threads.create_thread(conn, issue["source_client"], _username(), title, [issue["id"]],
                                      study_code=_username() if _is_participant() else None)
     st.session_state[f"chat_thread_{issue['source_client']}"] = tid
 
 
+def _short(text: str, n: int) -> str:
+    return text if len(text) <= n else text[:n - 1].rstrip() + "…"
+
+
 def _render_chat(conn, upload: dict) -> None:
-    """ChatGPT-style: thread list on the left; on the right an open
-    conversation filling the screen with the question bar directly under it."""
+    """Previous chats in a dropdown at the top, a "Discussing" line naming what the
+    chat is about, then the conversation with the question bar directly under it."""
     uid, client = upload["id"], upload["source_client"]
     username = _username()
     aliases = _aliases(conn, client)
     key = f"chat_thread_{client}"
 
     threads = chat_threads.list_threads(conn, client, username)
-    ids = {t["id"] for t in threads}
-    if st.session_state.get(key) not in ids:
+    by_id = {t["id"]: t for t in threads}
+    if st.session_state.get(key) not in by_id:
         st.session_state[key] = threads[0]["id"] if threads else None
     active = st.session_state[key]
 
-    side, main = st.columns([1, 3.4], gap="large")
-    with side:
-        if st.button("New chat", icon=":material/add:", type="primary", width="stretch", key="chat_new"):
-            st.session_state[key] = chat_threads.create_thread(
-                conn, client, username, study_code=username if _is_participant() else None)
+    pick_col, new_col, report_col, archive_col = st.container(key="wrap_chathead").columns(
+        [4.4, 1.2, 1.1, 0.55], vertical_alignment="bottom")
+    if threads:
+        ids = list(by_id)
+        # keyed by the active chat, so opening a chat from elsewhere (an issue) is not undone here
+        chosen = pick_col.selectbox(
+            "Previous chats", ids, index=ids.index(active), key=f"chat_pick_{client}_{active}",
+            format_func=lambda i: f"{_short(by_id[i]['title'], 52)} · {by_id[i]['updated_at']:%d %b %H:%M}")
+        if chosen != active:
+            st.session_state[key] = chosen
             st.rerun()
-        with st.container(height=600, border=False, key="chat_threads"):
-            if not threads:
-                st.caption("Your chats appear here.")
-            for t in threads:
-                label = t["title"] if len(t["title"]) <= 34 else t["title"][:33] + "…"
-                if st.button(label, key=f"thread_{t['id']}", width="stretch",
-                             type="secondary" if t["id"] == active else "tertiary",
-                             help=f"{t['message_count']} message(s) · {t['updated_at']:%d %b %H:%M}"):
-                    st.session_state[key] = t["id"]
-                    st.rerun()
+    else:
+        pick_col.caption("No previous chats yet. Ask a question below to start one.")
+    if new_col.button("New chat", icon=":material/add:", type="primary", width="stretch", key="chat_new"):
+        st.session_state[key] = chat_threads.create_thread(
+            conn, client, username, study_code=username if _is_participant() else None)
+        st.rerun()
 
-    with main:
-        audit_issues = repository.fetch_issues(conn, uid)
-        attached = chat_threads.thread_issues(conn, active) if active else []
-        options = {i["id"]: i for i in audit_issues} | {i["id"]: i for i in attached}
-        head, report_b, tools = st.container(key="wrap_chathead").columns([4.6, 1, 1],
-                                                                          vertical_alignment="bottom")
-        chosen = head.multiselect(
+    audit_issues = repository.fetch_issues(conn, uid)
+    attached = chat_threads.thread_issues(conn, active) if active else []
+    options = {i["id"]: i for i in audit_issues} | {i["id"]: i for i in attached}
+    focus = [options[i["id"]] for i in attached]
+    history = chat_threads.messages(conn, active) if active else []
+    if report_col.button("Report", icon=":material/summarize:", key=f"chat_report_{active}", width="stretch",
+                         help="Create a report from this chat"):
+        _report_dialog(conn, upload, focus, [dict(m) for m in history], from_chat=True)
+    if active and archive_col.button("", icon=":material/archive:", key=f"chat_archive_{active}",
+                                     width="stretch", help="Archive this chat"):
+        chat_threads.archive_thread(conn, active)
+        st.session_state[key] = None
+        st.rerun()
+
+    # what this chat is about, with a way back to the issue
+    about, change = st.container(key="row_discussing").columns([5, 1.3], vertical_alignment="center")
+    if focus:
+        first = focus[0]
+        col = display_columns(aliases, first["table_name"], first["column_name"])
+        where = first["table_name"] + (f" · {col}" if col else "")
+        more = f" (and {len(focus) - 1} more)" if len(focus) > 1 else ""
+        about.markdown(
+            f'<div class="discussing"><span class="label">Discussing:</span> <b>{html.escape(where)}</b>{more}: '
+            f'{html.escape(_short(show(first["description"], first["table_name"], aliases), 110))}</div>',
+            unsafe_allow_html=True)
+        if about.button("Open issue", key=f"chat_open_{active}_{first['id']}", type="tertiary",
+                        icon=":material/open_in_new:"):
+            _issue_dialog(conn, first["id"])
+    else:
+        about.markdown(f'<div class="discussing"><span class="label">About:</span> audit #{uid} '
+                       f'(general question)</div>', unsafe_allow_html=True)
+    with change.popover("Choose issues", icon=":material/checklist:", width="stretch"):
+        chosen_issues = st.multiselect(
             "Issues in this chat", list(options), default=[i["id"] for i in attached],
             format_func=lambda i: _issue_option_label(options[i], aliases),
-            placeholder="General question about this audit — or pick issues to discuss",
-            key=f"chat_issues_{active}", label_visibility="collapsed",
-        )
-        if active and set(chosen) != {i["id"] for i in attached}:
-            for i in set(chosen) - {i["id"] for i in attached}:
-                chat_threads.attach_issue(conn, active, i)
-            for i in {i["id"] for i in attached} - set(chosen):
-                chat_threads.detach_issue(conn, active, i)
-            st.rerun()
-        focus = [options[i] for i in chosen]
-        history = chat_threads.messages(conn, active) if active else []
-        if report_b.button("Report", icon=":material/summarize:", key=f"chat_report_{active}", width="stretch",
-                           help="Create a report from this chat"):
-            _report_dialog(conn, upload, focus, [dict(m) for m in history], from_chat=True)
-        if active and tools.button("", icon=":material/archive:", key=f"chat_archive_{active}",
-                                   width="stretch", help="Archive this chat"):
-            chat_threads.archive_thread(conn, active)
-            st.session_state[key] = None
-            st.rerun()
+            placeholder="None: a general question about this audit", key=f"chat_issues_{active}")
+    if active and set(chosen_issues) != {i["id"] for i in attached}:
+        for i in set(chosen_issues) - {i["id"] for i in attached}:
+            chat_threads.attach_issue(conn, active, i)
+        for i in {i["id"] for i in attached} - set(chosen_issues):
+            chat_threads.detach_issue(conn, active, i)
+        st.rerun()
+    focus = [options[i] for i in chosen_issues]
 
-        picked = None
-        with st.container(height=520, border=False, key="chat_scroll"):
-            if not history:
-                st.markdown(
-                    '<div class="chat-empty"><div class="chat-empty-title">What would you like to know?</div>'
-                    '<div class="chat-empty-sub">Ask about this audit — what to fix first, what an issue means, or '
-                    'how to explain the results to a manager. Answers use only audit results and statistics.'
-                    '</div></div>', unsafe_allow_html=True)
-                picked = st.pills("Suggestions", ISSUE_STARTERS if focus else GENERAL_STARTERS,
-                                  key=f"starter_{active}", label_visibility="collapsed")
-            for m in history:
-                with st.chat_message(m["role"], avatar=":material/person:" if m["role"] == "user"
-                                     else ":material/auto_awesome:"):
-                    st.markdown(m["content"])
-        question = st.chat_input("Ask a question…", key=f"chat_input_{client}") or picked
+    picked = None
+    with st.container(height=520, border=False, key="chat_scroll"):
+        if not history:
+            st.markdown(
+                '<div class="chat-empty"><div class="chat-empty-title">What would you like to know?</div>'
+                '<div class="chat-empty-sub">Ask about this audit: what to fix first, what an issue means, or '
+                'how to explain the results to a manager. Answers use only the audit results and statistics.'
+                '</div></div>', unsafe_allow_html=True)
+            if not focus:
+                picked = st.pills("Suggestions", GENERAL_STARTERS, key=f"starter_{active}",
+                                  label_visibility="collapsed")
+        for m in history:
+            with st.chat_message(m["role"], avatar=":material/person:" if m["role"] == "user"
+                                 else ":material/auto_awesome:"):
+                st.markdown(m["content"])
+    if focus:   # questions about the chosen issue, always one click away
+        picked = st.pills("Suggestions", ISSUE_STARTERS, key=f"issue_starter_{active}_{len(history)}",
+                          label_visibility="collapsed") or picked
+    question = st.chat_input("Ask a question…", key=f"chat_input_{client}") or picked
 
     if question:
         if not active:

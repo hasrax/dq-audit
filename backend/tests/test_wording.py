@@ -20,7 +20,8 @@ CASES = [
      "Check rows where col_11 is not col_3 × col_6 — a mis-entered total."),
     ("in 7 of 456,121 rows (<0.1%)", "in 7 of 456,121 rows (<0.1%)"),
     ("60 rows in GRNDtl (0.29%) have a value", "60 rows in GRNDtl (0.3%) have a value"),
-    ("true in 100.00% of 272,108 rows", "true in 100% of 272,108 rows"),
+    ("true in 100.00% of 272,108 rows, but in 10 rows", "true in over 99.9% of 272,108 rows, but in 10 rows"),
+    ("held in 100% of 141,228 rows", "held in 100% of 141,228 rows"),
     ("issue #1234 in audit #298, data from 2026", "issue #1234 in audit #298, data from 2026"),
 ]
 

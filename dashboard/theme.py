@@ -136,8 +136,12 @@ p, li {{ line-height: 1.6; }}
 .company-card .cstats {{ display:flex; gap:18px; margin-top: 10px; font-size: .88rem; color: var(--muted); }}
 .company-card .cstats b {{ color: var(--text); font-size: 1rem; }}
 /* chat: the conversation fills the screen down to the question bar */
-.st-key-chat_scroll {{ height: calc(100vh - 290px) !important; min-height: 320px; }}
-.st-key-chat_threads {{ height: calc(100vh - 230px) !important; min-height: 320px; }}
+.st-key-chat_scroll {{ height: calc(100vh - 380px) !important; min-height: 320px; }}
+.discussing {{ font-size: .95rem; color: var(--text); line-height: 1.5; }}
+.discussing .label {{ color: var(--muted); font-weight: 650; }}
+/* answers stay readable: about 70 characters per line */
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {{ max-width: 70ch; }}
+[data-testid="stChatMessage"] table {{ font-size: .875rem; }}
 .chat-empty {{ text-align: center; padding: 12vh 8% 18px 8%; }}
 .chat-empty-title {{ font-size: 1.6rem; font-weight: 700; color: var(--text); }}
 .chat-empty-sub {{ margin-top: 8px; color: var(--muted); font-size: .98rem; line-height: 1.6; }}
@@ -311,11 +315,7 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
   [class*="st-key-wrap_"] [data-testid="stColumn"]:first-child {{ flex: 1 1 100% !important; }}
   .issue-row .sum {{ white-space: normal; }}
   [class*="st-key-irow_"] .issue-row {{ margin-bottom: 22px; }}   /* clear of the actions below */
-  /* chat: no tall thread list above the conversation */
-  .st-key-chat_threads,
-  [data-testid="stLayoutWrapper"]:has(> .st-key-chat_threads) {{ height: auto !important; max-height: 132px;
-    min-height: 0; }}
-  .st-key-chat_scroll {{ height: 62vh !important; min-height: 300px; }}
+  .st-key-chat_scroll {{ height: 58vh !important; min-height: 300px; }}
 }}
 
 /* primary buttons: text colour that reads on the sage primary in both modes */

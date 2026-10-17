@@ -910,25 +910,34 @@ FILTER_LABELS = {"rule": "Rules", "llm": "AI", "flagged": "To review", "yes": "Y
 
 
 def _filter_bar(tables: list[str]) -> dict:
-    cols = st.columns(7)
-    specs = [
-        ("table", "Table", tables, ALL),
-        ("source", "Found by", ["rule", "llm"], ALL),
+    """Status, Severity and Table in view; the rest under "More filters"."""
+    main = [
         # participants keep the issue they just decided in view (study tasks 2-3)
         ("status", "Status", STATUSES, ALL if _is_participant() else "flagged"),
         ("severity", "Severity", ["high", "medium", "low"], ALL),
+        ("table", "Table", tables, ALL),
+    ]
+    more = [
+        ("source", "Found by", ["rule", "llm"], ALL),
         ("dimension", "Dimension", DIMENSIONS, ALL),
         ("trend", "Trend", TRENDS, ALL),
         ("fixable", "Fixable", ["yes", "no"], ALL),
     ]
-    filters = {}
-    for col, (key, label, options, default) in zip(cols, specs):
+
+    def box(where, key, label, options, default):
         choices = [ALL, *options]
-        filters[key] = col.selectbox(
+        return where.selectbox(
             label, choices, index=choices.index(default), key=f"filter_{key}",
             format_func=lambda v: "All" if v == ALL else FILTER_LABELS.get(
                 v, v if key == "table" else v.replace("_", " ").capitalize()),
         )
+
+    cols = st.columns([1, 1, 1.4, 1.1], vertical_alignment="bottom")
+    filters = {spec[0]: box(col, *spec) for col, spec in zip(cols, main)}
+    active = sum(st.session_state.get(f"filter_{k}", ALL) != ALL for k, *_ in more)
+    with cols[3].popover(f"More filters ({active})" if active else "More filters", icon=":material/tune:",
+                         width="stretch"):
+        filters.update({spec[0]: box(st, *spec) for spec in more})
     return filters
 
 
@@ -984,26 +993,27 @@ def _render_triage(conn, upload: dict) -> None:
                         format_func=lambda t: f"{t} {types[t]}", label_visibility="collapsed")
         if pick:
             issues = [i for i in issues if grouping.type_label(i["dimension"]) == pick]
-    head_l, head_csv, head_xlsx = st.container(key="row_downloads").columns([3, 1, 1])
+    head_l, head_r = st.container(key="row_downloads").columns([3, 2], vertical_alignment="center")
     head_l.caption(f"Showing {len(issues)} issue(s)")
     if issues:
         org = client_label(upload["source_client"])
         stem = f"{org.replace(' ', '_').replace('·', '')}_audit{uid}_issues"
-        head_csv.download_button(
-            "⬇️ CSV",
+        downloads = head_r.container(horizontal=True, horizontal_alignment="right", gap="small")
+        downloads.download_button(
+            "CSV",
             data=issues_to_csv(issues, aliases, organisation=org),
             file_name=f"{stem}.csv",
             mime="text/csv",
-            width="stretch",
+            icon=":material/download:",
             help="Downloads exactly the issues shown (current filters), with triage status.",
         )
-        head_xlsx.download_button(
-            "⬇️ Excel",
+        downloads.download_button(
+            "Excel",
             data=issues_to_xlsx(issues, aliases, organisation=org,
-                                title=f"{org} — audit #{uid} issues", filters=filters),
+                                title=f"{org}: audit #{uid} issues", filters=filters),
             file_name=f"{stem}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
+            icon=":material/download:",
             help="Formatted workbook with an issue sheet and a summary by dimension and severity.",
             on_click=_study_log, args=("excel_downloaded", {"table": _none_if_all(filters["table"]),
                                                             "rows": len(issues)}),

@@ -213,7 +213,17 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
 .issue-row .dot {{ display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 9px;
   vertical-align: middle; }}
-.group-card {{ box-shadow: 4px 4px 0 -1px var(--surface-2), 4px 4px 0 0 var(--border); }}
+/* Triage: the whole row (tick, text, Accept / Reject / Open) is one card; 10 px between cards */
+[class*="st-key-irow_"], [class*="st-key-grp_"] {{ background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 8px 12px 12px 12px; margin-bottom: -6px; }}   /* 16 px block gap - 6 = 10 px */
+[class*="st-key-irow_"] .issue-row, [class*="st-key-grp_"] .issue-row {{ border: none; background: transparent;
+  padding: 4px 4px; }}
+[class*="st-key-grp_"] {{ box-shadow: 4px 4px 0 -1px var(--surface-2), 4px 4px 0 0 var(--border); }}   /* a stack */
+[class*="st-key-grp_"] [data-testid="stExpander"] details {{ border: none; border-top: 1px solid var(--border);
+  border-radius: 0; }}
+/* the issues inside an opened group are rows of that card, not cards of their own */
+[class*="st-key-grp_"] [class*="st-key-irow_"] {{ border: none; border-top: 1px solid var(--border); border-radius: 0;
+  background: transparent; margin: 0; padding: 8px 0; box-shadow: none; }}
 .issue-row .meta {{ margin-top: 4px; color: var(--faint); font-size: .875rem; }}
 .section-label {{ font-size: .8rem; text-transform: uppercase; letter-spacing: .5px; color: var(--faint);
   margin: 14px 0 4px 0; font-weight: 650; }}

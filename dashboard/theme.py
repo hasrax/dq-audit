@@ -160,6 +160,10 @@ div.stVerticalBlock.st-key-chat_scroll, div[data-testid="stLayoutWrapper"]:has(>
 [data-testid="stChatInput"] {{ border-radius: 14px; }}
 [data-testid="stSidebar"] {{ border-right: 1px solid var(--border); }}
 [data-testid="stSidebarUserContent"] {{ padding-bottom: 24px; }}
+/* the theme is chosen in Settings > Appearance (it reloads the page, so every colour follows).
+   Streamlit's own switch in the menu does not re-run the app, which left the page half light, half dark */
+[data-testid="stThemeSwitcher"], [data-testid="stThemeSwitcher"] + [data-testid="stMainMenuDivider"] {{
+  display: none !important; }}
 [data-testid="stHeader"] {{ background: transparent; }}
 h1, h2, h3, h4, h5 {{ letter-spacing: 0.1px; }}
 

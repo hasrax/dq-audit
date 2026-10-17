@@ -18,7 +18,7 @@ noise itself is reported as a transferability finding (T6). The DQ
 score is recomputed from the issues that were kept.
 
 Usage:
-    python -m app.study.setup --from-upload=<upload id> [--name="Study copy"]
+    python -m app.study.setup --from-upload=<upload id> [--name="Study copy (from Company D)"]
 """
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def build_study_workspace(conn: psycopg.Connection, from_upload: int, name: str 
         raise SystemExit(f"upload #{from_upload} does not exist")
     parent, row_count, as_of, uploaded = src
     refresh_names(conn)
-    name = name or "Study copy"
+    name = name or f"Study copy (from {client_label(parent)})"
     slug = slug or "study-" + slugify(client_label(parent))
     if replace_others:   # one study at a time: retire any other study copy
         old = [r[0] for r in conn.execute("SELECT slug FROM workspaces WHERE kind = 'study' AND slug <> %s",

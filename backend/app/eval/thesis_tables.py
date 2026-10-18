@@ -42,6 +42,8 @@ def companies(conn) -> list[dict]:
     ws.refresh_names(conn)
     out = []
     for w in ws.list_workspaces(conn, kinds=("real",)):
+        if w["slug"] in ws.DEMO_ONLY:   # demonstration data, never evidence
+            continue
         uploads = repository.list_uploads(conn, source_client=w["slug"])
         if uploads:
             out.append({"slug": w["slug"], "label": client_label(w["slug"]), "local_only": w.get("local_only"),
@@ -172,7 +174,8 @@ def main(argv: list[str] | None = None) -> None:
     flat = conn.execute(
         "SELECT count(*) FROM issue_projections p JOIN uploads u ON u.id = p.upload_id "
         "WHERE p.actual_value IS NOT NULL AND p.slope = 0 AND u.source_client IN "
-        "(SELECT slug FROM workspaces WHERE kind IN ('real', 'replay'))").fetchone()[0]
+        "(SELECT slug FROM workspaces WHERE kind IN ('real', 'replay')) AND u.source_client <> ALL(%s)",
+        (list(ws.DEMO_ONLY),)).fetchone()[0]
     (out / "projection_error.md").write_text(
         "# Projection error (T10)\n\nProjected vs actual affected rows for settled projections; flat "
         f"histories (slope 0) are excluded: **{flat}** excluded.\n\n" + _md(pd.DataFrame([pe])), encoding="utf-8")

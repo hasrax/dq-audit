@@ -41,6 +41,9 @@ def sync_from_uploads(conn: psycopg.Connection) -> int:
 
 KINDS = ("real", "study", "test", "replay")
 KIND_LABEL = {"study": "study copy", "test": "test data", "replay": "replay"}
+# Real data used only to demonstrate the system, never as evaluation evidence: Company G's
+# monthly packs were built for the viva on 18 Oct 2026, after the data cut-off.
+DEMO_ONLY = ("demo-company",)
 
 
 def list_workspaces(conn: psycopg.Connection, kinds: tuple[str, ...] = KINDS) -> list[dict]:

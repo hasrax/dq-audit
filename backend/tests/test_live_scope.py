@@ -66,3 +66,20 @@ def test_decision_restores_the_score(conn):
     repository.update_issue_status(conn, high["id"], "flagged")
     assert float(conn.execute("SELECT overall_score FROM dq_scores WHERE upload_id = %s",
                               (uid,)).fetchone()[0]) == pytest.approx(before)
+
+
+def test_demo_company_is_never_evaluation_evidence():
+    from app import workspaces as ws
+    from app.eval import live, thesis_tables
+
+    try:
+        c = repository.connect()
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"PostgreSQL not available: {exc}")
+    try:
+        assert "demo-company" in ws.DEMO_ONLY
+        assert not {x["slug"] for x in thesis_tables.companies(c)} & set(ws.DEMO_ONLY)
+        demo = {r[0] for r in c.execute("SELECT id FROM uploads WHERE source_client = ANY(%s)", (list(ws.DEMO_ONLY),))}
+        assert not demo & set(live.latest_upload_ids(c))
+    finally:
+        c.close()

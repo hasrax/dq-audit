@@ -202,7 +202,9 @@ class Pack:
         lines += ["", "Everything else in this month is as exported (the real data was clean on these points).",
                   ("The item list (ItemMaster) is not part of this month's export; it joins from August."
                    if self.month < ITEMS_FROM else
-                   "The item list (ItemMaster) joins the export this month, so the AI looks at it for the first time."),
+                   "The item list (ItemMaster) joins the export this month, so the AI looks at it for the first time."
+                   if self.month == ITEMS_FROM else
+                   "The item list (ItemMaster) is included, as it has been since August."),
                   "The AI looks at column statistics and a small masked sample, so a planted problem in a few rows "
                   "is not reported on every run (see T7 in the dissertation); the rules always find theirs."]
         (folder / "ANSWER_KEY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

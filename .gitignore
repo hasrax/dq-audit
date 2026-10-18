@@ -17,3 +17,11 @@ output/
 # Streamlit secrets and evaluation outputs stay local
 .streamlit/secrets.toml
 evaluation/
+
+# Not code: documents, design files and crash dumps stay local
+docs/
+brand/
+*.docx
+*.pdf
+*.pptx
+*.stackdump

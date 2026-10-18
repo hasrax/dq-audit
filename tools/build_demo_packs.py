@@ -26,12 +26,18 @@ TABLES = ["InvoiceHeader", "InvoiceDetails", "SalesReturnHeader", "SalesReturnDT
           "CustomerMaster", "ItemMaster", "SalesRepMaster"]
 HISTORY = ["2026-04", "2026-05", "2026-06"]
 SEED = 20261018
+# The item list joins the export from August: the months already in the system (April-July) leave it out,
+# so the AI's findings about items (damaged above stock, wholesale below purchase price) first appear in the
+# August pack imported live on demo day. Customer and rep findings are already visible from July.
+ITEMS_FROM = "2026-08"
 
 
 def load_month(month: str) -> dict[str, pd.DataFrame]:
     folder = SRC / month
     out = {}
     for t in TABLES:
+        if t == "ItemMaster" and month < ITEMS_FROM:
+            continue
         # tolerate small typos in the exported file names (e.g. "CustomerMaste.csv")
         path = folder / f"{t}.csv"
         if not path.exists():
@@ -121,7 +127,7 @@ class Pack:
             set_line_amount(d, i)
         self.note("Item sold at a price of zero", "InvoiceDetails", "Price",
                   [f"invoice {d.loc[i, 'ReceiptComputerCode']}, item {d.loc[i, 'ItemCode']}" for i in rows],
-                  "AI (contextual)")
+                  "AI (contextual; may not be reported on every run)")
 
     def unknown_item(self, n):
         d = self.t["InvoiceDetails"]
@@ -147,13 +153,15 @@ class Pack:
 
     def quantity_x100(self, n):
         d = self.t["InvoiceDetails"]
-        rows = self.pick("InvoiceDetails", n, lambda df: num(df, "Quantity").between(1, 5))
+        # quantities of 20-50 become 2,000-5,000: above the largest real quantity (1,000), so the jump also
+        # shows in the column statistics the AI sees, not only in the few sample rows
+        rows = self.pick("InvoiceDetails", n, lambda df: num(df, "Quantity").between(20, 50))
         for i in rows:
             d.loc[i, "Quantity"] = str(int(float(d.loc[i, "Quantity"])) * 100)
             set_line_amount(d, i)
         self.note("Quantity 100 times too large (two extra zeros typed)", "InvoiceDetails", "Quantity",
                   [f"invoice {d.loc[i, 'ReceiptComputerCode']}, item {d.loc[i, 'ItemCode']}: "
-                   f"{d.loc[i, 'Quantity']}" for i in rows], "AI (contextual)")
+                   f"{d.loc[i, 'Quantity']}" for i in rows], "AI (contextual; may not be reported on every run)")
 
     def duplicate_rows(self, table, n, key_col, label):
         df = self.t[table]
@@ -170,7 +178,7 @@ class Pack:
             set_line_amount(d, i)
         self.note("Price 50 times the usual price for the item", "InvoiceDetails", "Price",
                   [f"invoice {d.loc[i, 'ReceiptComputerCode']}, item {d.loc[i, 'ItemCode']}: {d.loc[i, 'Price']}"
-                   for i in rows], "AI (contextual)")
+                   for i in rows], "AI (contextual; may not be reported on every run)")
 
     def negative_return(self, n):
         s = self.t["SalesReturnDTL"]
@@ -191,7 +199,12 @@ class Pack:
                  "Import it in the app with **Data as of** = the last day of the month.", "",
                  "| # | Planted problem | Where | Rows | Should be found by |", "|---|---|---|---|---|"]
         lines += [f"| {k} | {p} | {w} | {r} | {f} |" for k, (p, w, r, f) in enumerate(self.key, start=1)]
-        lines += ["", "Everything else in this month is as exported (the real data was clean on these points)."]
+        lines += ["", "Everything else in this month is as exported (the real data was clean on these points).",
+                  ("The item list (ItemMaster) is not part of this month's export; it joins from August."
+                   if self.month < ITEMS_FROM else
+                   "The item list (ItemMaster) joins the export this month, so the AI looks at it for the first time."),
+                  "The AI looks at column statistics and a small masked sample, so a planted problem in a few rows "
+                  "is not reported on every run (see T7 in the dissertation); the rules always find theirs."]
         (folder / "ANSWER_KEY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"{self.name}: {len(self.key)} planted problems")
 

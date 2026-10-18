@@ -77,3 +77,4 @@ def test_admin_study_page(conn):
     assert not at.exception
     assert "Study" in _text(at)
     assert any(b.key == "study_make_codes" for b in at.button)
+    assert any(t.key == "study_signin_toggle" for t in at.toggle)   # admins can open / close the sign-in

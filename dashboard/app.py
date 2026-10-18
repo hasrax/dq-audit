@@ -243,8 +243,11 @@ def _render_login(conn) -> None:
                     f'</span>{html.escape(APP_NAME)}</div><div class="auth-title">Sign in</div>',
                     unsafe_allow_html=True)
         _staff_login(conn)
-        st.markdown('<div class="auth-divider"><span>Study participant?</span></div>', unsafe_allow_html=True)
-        _study_login(conn, prefill)
+        if sp.signin_open(conn):
+            st.markdown('<div class="auth-divider"><span>Study participant?</span></div>', unsafe_allow_html=True)
+            _study_login(conn, prefill)
+        elif link:   # an old study link after the study closed
+            st.caption("The usability study has finished. Thank you for taking part.")
 
 
 def _study_login(conn, prefill: str) -> None:
@@ -483,6 +486,14 @@ def _render_study_admin(conn) -> None:
     st.markdown('<div class="page-sub">The unmoderated usability test. Participants sign in with a code, do 5 tasks '
                 'on the study copy, then fill in the questionnaire. Nothing they do touches real data.</div>',
                 unsafe_allow_html=True)
+    is_open = sp.signin_open(conn)
+    want = st.toggle("Participants can sign in", value=is_open, key="study_signin_toggle",
+                     help="Shows the study-code box on the sign-in page. Closed once the study has finished; "
+                          "codes, results and the study copy are kept either way.")
+    if want != is_open:
+        sp.set_signin_open(conn, want, updated_by=_username())
+        st.toast("Study sign-in " + ("opened" if want else "closed"), icon=":material/check:")
+        st.rerun()
     slug = ws.study_workspace(conn)
     study_uploads = repository.list_uploads(conn, source_client=slug) if slug else []
     left, right = st.columns(2)
@@ -1448,7 +1459,8 @@ def _render_thesis_snapshot() -> None:
     """The frozen evaluation results, exactly as reported in the dissertation."""
     from app.eval.export_workbook import SNAPSHOT
     if not SNAPSHOT.exists():
-        st.info("The thesis snapshot has not been frozen yet. It appears here once the evaluation snapshot is taken.")
+        st.info("The thesis snapshot is kept on the researcher's computer: spreadsheets are not uploaded to the "
+                "hosted site. The live numbers are under All companies.")
         return
     tables = _snapshot_tables(SNAPSHOT.stat().st_mtime)
     facts = dict(tables.pop("README").itertuples(index=False, name=None))

@@ -117,15 +117,19 @@ def _declaration(wb) -> dict:
 def read_triage(path: Path) -> tuple[dict[int, str], dict[int, str], dict]:
     wb = load_workbook(path, read_only=False)
     ws = wb["Triage"]
+    # columns found by their heading: a reviewer (or Google Sheets) may delete or move one
+    header = [str(c.value or "").strip() for c in ws[1]]
+    dec = header.index("Decision") if "Decision" in header else 8
+    why = next((k for k, h in enumerate(header) if h.startswith("Reason")), dec + 1)
     decisions, reasons = {}, {}
     for row in ws.iter_rows(min_row=2):
         no = row[0].value
         if isinstance(no, (int, float)) or (isinstance(no, str) and no.isdigit()):
-            d = str(row[8].value or "").strip().capitalize()
+            d = str(row[dec].value or "").strip().capitalize() if dec < len(row) else ""
             if d in DECISIONS:
                 decisions[int(no)] = d
-            if row[9].value:
-                reasons[int(no)] = str(row[9].value)
+            if why < len(row) and row[why].value:
+                reasons[int(no)] = str(row[why].value)
     return decisions, reasons, _declaration(wb)
 
 
@@ -271,7 +275,7 @@ def main(argv: list[str] | None = None) -> None:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
-    md = ["# Triage agreement (T4)", "", "Reviewer profiles: " + "; ".join(profiles), "",
+    md = ["# Triage agreement (T12)", "", "Reviewer profiles: " + "; ".join(profiles), "",
           "Items without a decision: " + ", ".join(f"{k} {v}" for k, v in missing.items()), "",
           _table(rows), "## Confusion (rows = MHG)", "", _table(confusion), "## Disagreements", "",
           _table(disagreements)]
@@ -282,7 +286,7 @@ def main(argv: list[str] | None = None) -> None:
             w.writeheader()
             w.writerows(recall_rows)
         (out / "recall.md").write_text("\n".join([
-            "# Recall check (T5)", "", "Miss rate = rows a rater found a problem in, among rows the system did "
+            "# Recall check (T4)", "", "Miss rate = rows a rater found a problem in, among rows the system did "
             "not flag (column-wide findings excluded, majority rule). Wilson 95% CI.", "", _table(recall_rows),
             "## Agreement on the reviewer subset", "", _table(recall_agree)]), encoding="utf-8")
 

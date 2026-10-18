@@ -1434,6 +1434,7 @@ EVAL_SCOPES = ["This audit", "This company", "All companies"]
 
 SNAPSHOT_TITLES = {
     "T3 Precision": "Precision by company and detector (Wilson 95% CI)",
+    "T4 Recall": "Recall spot-check: problems in rows the system did not flag (second reviewer)",
     "T5 Injection": "Planted-error coverage (known answer key)",
     "T6 Reproducibility": "Reproducibility and transferability across companies",
     "T7 AI stability": "AI run-to-run stability",
@@ -1442,9 +1443,11 @@ SNAPSHOT_TITLES = {
     "T10 Projection": "Trend projection error (flat histories excluded)",
     "T11 Schema check": "AI-drafted column descriptions judged against the source schema",
     "T11 Schema docs": "Schema documentation status",
+    "T12 Agreement": "Triage agreement: researcher vs second reviewer (Cohen's kappa)",
     "T13 Tasks v1": "Usability study, iteration 1: task completion",
     "T13 Tasks v2": "Usability study, iteration 2: task completion",
     "T13 SUS summary": "Usability study: SUS and explanation-clarity ratings",
+    "T14 Tests": "Automated tests per component",
     "T15 Privacy": "Privacy check of AI prompts (expected zero)",
 }
 

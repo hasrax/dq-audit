@@ -21,6 +21,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from app.aliases import REPLAY_SUFFIX, base_client
+from app.workspaces import DEMO_ONLY
 
 MIN_DECISIONS = 20   # below this, a precision figure is shown as provisional
 
@@ -131,8 +132,10 @@ def projection_error(conn: psycopg.Connection, source_client: str | None = None)
     if source_client:
         base = base_client(source_client)
         sql, params = sql + " AND u.source_client IN (%s, %s)", (base, base + REPLAY_SUFFIX)
-    else:   # the replay is the documented source of projections; study / test copies never count
-        sql += " AND u.source_client IN (SELECT slug FROM workspaces WHERE kind IN ('real', 'replay'))"
+    else:   # the replay is the documented source of projections; study / test / demo data never count
+        sql += (" AND u.source_client IN (SELECT slug FROM workspaces WHERE kind IN ('real', 'replay'))"
+                " AND u.source_client <> ALL(%s)")
+        params = (list(DEMO_ONLY),)
     rows = conn.execute(sql, params).fetchall()
     if not rows:
         return {"n": 0}

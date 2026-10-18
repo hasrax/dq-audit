@@ -31,11 +31,12 @@ T11_SHEET = ROOT / "evaluation" / "T11_schema_check_CompanyA.xlsx"
 SL = timezone(timedelta(hours=5, minutes=30))
 # tab name -> source CSV (in the results folder), in reading order
 TABS = [
-    ("T3 Precision", "precision.csv"), ("T5 Injection", "injection_coverage.csv"),
+    ("T3 Precision", "precision.csv"), ("T4 Recall", "recall.csv"), ("T5 Injection", "injection_coverage.csv"),
     ("T6 Reproducibility", "reproducibility.csv"),
     ("T7 AI stability", "ai_stability.csv"), ("T7 Pairs", "ai_stability_pairs.csv"),
     ("T8 Rules vs AI", "complementarity.csv"), ("T10 Projection", "projection_error.csv"),
     ("T11 Schema check", "schema_check_t11.csv"), ("T11 Schema docs", "schema_docs.csv"),
+    ("T12 Agreement", "agreement.csv"),
     ("T13 Tasks all", "usability_tasks.csv"), ("T13 Tasks v1", "usability_tasks_v1.csv"),
     ("T13 Tasks v2", "usability_tasks_v2.csv"), ("T13 Participants", "usability.csv"),
     ("T13 SUS", "sus_scores.csv"), ("T13 Integrity", "integrity.csv"), ("T14 Tests", "automated_tests.csv"),
@@ -46,9 +47,9 @@ TABS = [
 # Summary tabs copied into the app's "Thesis snapshot" view (per-participant tabs stay out). The file is
 # local only: spreadsheets are git-ignored, so the hosted site shows a note instead.
 SNAPSHOT = ROOT / "config" / "thesis_snapshot.xlsx"
-SNAPSHOT_TABS = ["T3 Precision", "T5 Injection", "T6 Reproducibility", "T7 AI stability", "T7 Pairs",
-                 "T8 Rules vs AI", "T10 Projection", "T11 Schema check", "T11 Schema docs", "T13 Tasks v1",
-                 "T13 Tasks v2", "T15 Privacy"]
+SNAPSHOT_TABS = ["T3 Precision", "T4 Recall", "T5 Injection", "T6 Reproducibility", "T7 AI stability",
+                 "T7 Pairs", "T8 Rules vs AI", "T10 Projection", "T11 Schema check", "T11 Schema docs",
+                 "T12 Agreement", "T13 Tasks v1", "T13 Tasks v2", "T14 Tests", "T15 Privacy"]
 
 
 def freeze(workbook: Path, dst: Path = SNAPSHOT) -> Path:

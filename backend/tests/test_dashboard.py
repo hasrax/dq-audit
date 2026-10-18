@@ -165,3 +165,19 @@ def test_reviewer_cannot_open_an_admin_page_by_link():
     at = _app(REVIEWER, page="settings")
     assert not at.exception
     assert "AI model" not in _text(at)
+
+
+def test_schema_review_offers_ai_drafting_when_a_company_has_no_docs():
+    c = repository.connect()
+    row = c.execute(
+        "SELECT w.slug FROM workspaces w WHERE w.kind = 'real' "
+        "AND EXISTS (SELECT 1 FROM uploads u JOIN profiles p ON p.upload_id = u.id WHERE u.source_client = w.slug) "
+        "AND NOT EXISTS (SELECT 1 FROM schema_doc_tables d WHERE d.source_client = w.slug) ORDER BY w.slug LIMIT 1"
+    ).fetchone()
+    c.close()
+    if not row:
+        pytest.skip("every audited company already has schema docs")
+    at = _app(page="schema", company=row[0])
+    assert not at.exception, at.exception
+    assert any((b.key or "").startswith("docs_draft_") for b in at.button)
+    assert "No schema documentation" in " ".join(a.value for a in at.info)

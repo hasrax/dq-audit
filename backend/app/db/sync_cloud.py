@@ -13,10 +13,13 @@ the hosted admin separately. Row ids are preserved so every link
 
 Usage (reads CLOUD_DATABASE_URL from backend/.env):
     python -m app.db.sync_cloud [--replace] [--dry-run] [--discard-study-results]
+    python -m app.db.sync_cloud --refresh [--include=company-d,company-e,company-f] [--dry-run]
 
-Never copied: local-only workspaces (Companies D-G), test/injection data,
-user accounts, chat and study sessions. --replace refuses to run once
-real study participants have started on the hosted database.
+Never copied: local-only workspaces (Companies D-G) unless named with --include
+(18 Oct 2026: D-F shown on the hosted site, still out of the pooled research numbers),
+test/injection data, user accounts, chat and study sessions. --replace refuses to run
+once real study participants have started on the hosted database; --refresh updates
+in place and keeps them.
 """
 from __future__ import annotations
 
@@ -182,6 +185,63 @@ def sync(local_url: str, cloud_url: str, replace: bool = False, dry_run: bool = 
         cloud.close()
 
 
+def refresh(local_url: str, cloud_url: str, include: list[str] | None = None, apply: bool = False) -> dict:
+    """Bring the hosted copy up to date without deleting anything: upsert by id (ids are shared
+    since the first sync) for the hosted companies (real, not local-only) plus `include` (slugs of
+    local-only companies to show on the hosted site; they keep their local-only mark, so they stay
+    out of the pooled research numbers). Study copies, participants, chats, users and settings are
+    not touched. Scores are recomputed afterwards. Returns {table: (rows, new)}."""
+    local = psycopg.connect(local_url)
+    cloud = psycopg.connect(cloud_url)
+    try:
+        repository.apply_schema(cloud)
+        include = include or []
+        slugs = [r[0] for r in local.execute(
+            "SELECT slug FROM workspaces WHERE kind = 'real' AND (NOT COALESCE(local_only, FALSE) OR slug = ANY(%s))",
+            (include,)).fetchall()]
+        uploads = [r[0] for r in local.execute("SELECT id FROM uploads WHERE source_client = ANY(%s)",
+                                               (slugs,)).fetchall()]
+        masker = Masker(local)
+        masker.excluded_clients -= set(include)
+        masker.excluded_uploads = {u for u, c in masker.clients.items() if c in masker.excluded_clients}
+        scope = {"workspaces": ("slug = ANY(%s)", slugs), "uploads": ("source_client = ANY(%s)", slugs)}
+        scope |= {t: ("upload_id = ANY(%s)", uploads) for t in ("profiles", "relationships", "rules", "issues",
+                                                               "issue_projections", "llm_prompt_log")}
+        scope |= {t: ("source_client = ANY(%s)", slugs) for t in ("schema_doc_tables", "schema_doc_columns",
+                                                                 "org_notes", "rule_suppressions")}
+        counts = {}
+        for table in TABLES:
+            if table not in scope:
+                continue
+            where, param = scope[table]
+            with local.cursor(row_factory=dict_row) as cur:
+                rows = cur.execute(f"SELECT * FROM {table} WHERE {where} ORDER BY id", (param,)).fetchall()
+            rows = [r for r in (transform(table, r, masker) for r in rows) if r is not None]
+            hosted = {r[0] for r in cloud.execute(f"SELECT id FROM {table}").fetchall()}
+            counts[table] = (len(rows), sum(r["id"] not in hosted for r in rows))
+            if not rows or not apply:
+                continue
+            jsonb = _jsonb_columns(cloud, table)
+            cols = list(rows[0])
+            sql = (f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))}) "
+                   "ON CONFLICT (id) DO UPDATE SET " + ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c != "id"))
+            with cloud.cursor() as cur:
+                cur.executemany(sql, [tuple(Jsonb(r[c]) if c in jsonb and r[c] is not None else r[c] for c in cols)
+                                      for r in rows])
+                cur.execute(f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
+                            f"(SELECT COALESCE(MAX(id), 1) FROM {table}))")
+        if apply:
+            cloud.commit()
+            for uid in uploads:   # same formula, on the hosted decisions
+                repository.score_upload(cloud, uid)
+        else:
+            cloud.rollback()
+        return counts
+    finally:
+        local.close()
+        cloud.close()
+
+
 def main(argv: list[str] | None = None) -> None:
     argv = argv if argv is not None else sys.argv[1:]
     settings = load_settings()
@@ -191,6 +251,11 @@ def main(argv: list[str] | None = None) -> None:
     if "sslmode=" not in cloud_url:
         cloud_url += ("&" if "?" in cloud_url else "?") + "sslmode=require"
     dry = "--dry-run" in argv
+    if "--refresh" in argv:   # update in place, keep study results; --include=company-d,company-e
+        include = next((a.split("=", 1)[1].split(",") for a in argv if a.startswith("--include=")), [])
+        for table, (n, new) in refresh(settings.db_url, cloud_url, include, apply=not dry).items():
+            print(f"{'would copy' if dry else 'copied'} {n:>6} rows ({new} new)  {table}")
+        return
     counts = sync(settings.db_url, cloud_url, replace="--replace" in argv, dry_run=dry,
                   discard_study="--discard-study-results" in argv)
     verb = "would copy" if dry else "copied"

@@ -11,6 +11,10 @@ Usage:
 
 By default only tables with no docs yet are drafted. --regenerate redrafts
 every unverified column; VERIFIED columns are never overwritten.
+
+In the dashboard, Schema review's "Draft with AI" uses document_from_audits:
+the same drafting from the statistics saved with the company's audits, so a
+company imported without docs can get them later, without its export files.
 """
 from __future__ import annotations
 
@@ -158,6 +162,118 @@ def document_directory(
     finally:
         if own_conn:
             conn.close()
+    return summary
+
+
+VALUE_TYPES = {"int", "decimal", "date"}   # numbers and dates are the audit subject: never masked
+
+
+def audited_tables(conn, source_client: str) -> list[str]:
+    """Tables that have stored statistics in any of the company's audits."""
+    return [r[0] for r in conn.execute(
+        "SELECT DISTINCT p.table_name FROM profiles p JOIN uploads u ON u.id = p.upload_id "
+        "WHERE u.source_client = %s ORDER BY 1", (base_client(source_client),)).fetchall()]
+
+
+def stored_profiles(conn, source_client: str) -> tuple[dict[str, dict], list[dict]]:
+    """Each table's profile as saved with the company's most recent audit that
+    has the table, plus those audits' discovered links. No source files needed.
+
+    The saved statistics hold no most-common values and no row count, so
+    top_values is empty and the row count is worked out from a column's
+    empty count and share (else the largest distinct count). The primary key
+    is the first column that is never empty and unique on every row.
+    """
+    from app.db import repository
+
+    latest = dict(conn.execute(
+        "SELECT p.table_name, max(p.upload_id) FROM profiles p JOIN uploads u ON u.id = p.upload_id "
+        "WHERE u.source_client = %s GROUP BY p.table_name ORDER BY p.table_name", (source_client,)).fetchall())
+    profiles = {}
+    for table, upload_id in latest.items():
+        rows = conn.execute(
+            "SELECT column_name, data_type, null_count, null_pct, distinct_count, min_val, max_val, mean_val "
+            "FROM profiles WHERE upload_id = %s AND table_name = %s ORDER BY id", (upload_id, table)).fetchall()
+        with_nulls = [(n, float(p)) for _, _, n, p, *_ in rows if n and p]
+        if with_nulls:
+            n, p = max(with_nulls)
+            row_count = round(n * 100 / p)
+        else:
+            row_count = max((r[4] or 0 for r in rows), default=0) or None   # r[4] = distinct_count
+        columns = {
+            col: {"type": ty or "varchar", "null_pct": float(p) if p is not None else None, "distinct_count": d,
+                  "min": lo, "max": hi, "mean": float(mean) if mean is not None else None, "top_values": {},
+                  "null_count": n}
+            for col, ty, n, p, d, lo, hi, mean in rows
+        }
+        pk = next((c for c, s in columns.items() if row_count and not s["null_count"]
+                   and s["distinct_count"] == row_count), None)
+        profiles[table] = {"table_name": table, "row_count": row_count, "primary_key": pk, "columns": columns,
+                           "upload_id": upload_id}
+
+    links, seen = [], set()
+    for upload_id in sorted(set(latest.values())):
+        for r in repository.fetch_relationships(conn, upload_id):
+            key = (r["child_table"], r["child_column"], r["parent_table"], r["parent_column"])
+            if key not in seen:
+                seen.add(key)
+                links.append(r)
+    return profiles, links
+
+
+def mask_stored_profile(profile: dict, source_client: str) -> dict:
+    """Mask the min / max of text columns (and privacy-listed ones) before the
+    profile leaves the machine. Without the rows the name heuristic can't run,
+    so every text column is treated as personal unless the company's privacy
+    list keeps it; values masked earlier (hosted copy) are left as they are."""
+    from app.privacy.pseudonymize import mask_value
+
+    lists = load_overrides(base_client(source_client)).get(profile["table_name"], {})
+    mask, keep = lists.get("mask", set()), lists.get("keep", set())
+    columns = {}
+    for col, s in profile["columns"].items():
+        personal = col in mask or (s["type"] not in VALUE_TYPES and col not in keep)
+        s = dict(s)
+        if personal:
+            for k in ("min", "max"):
+                v = s.get(k)
+                if v is not None and not str(v).startswith("MASK_"):
+                    s[k] = mask_value(str(v))
+        columns[col] = s
+    return {**profile, "columns": columns}
+
+
+def document_from_audits(
+    conn,
+    source_client: str,
+    tables: list[str] | None = None,
+    regenerate: bool = False,
+    client: LLMClient | None = None,
+    progress=None,
+) -> dict[str, dict]:
+    """Draft docs for a company's tables from the statistics stored with its
+    audits (Schema review's "Draft with AI"; works on the hosted site, where
+    no export files are kept). Same prompt, checks and store as
+    document_directory; tables that already have docs are skipped unless
+    regenerate, and verified text is never overwritten. Each table is saved
+    as soon as it is drafted, so a stop part-way keeps the finished ones."""
+    from app.schema_docs import store
+
+    source_client = base_client(source_client)
+    profiles, links = stored_profiles(conn, source_client)
+    already = set() if regenerate else store.documented_tables(conn, source_client)
+    targets = [t for t in (tables or list(profiles)) if t in profiles and t not in already]
+    client = client or (LLMClient() if targets else None)
+    model = getattr(getattr(client, "settings", None), "llm_model", None)
+    summary = {}
+    for i, name in enumerate(targets):
+        if progress:
+            progress(i, len(targets), name)
+        doc = generate_table_doc(mask_stored_profile(profiles[name], source_client), links, list(profiles),
+                                 client=client)
+        store.save_table_doc(conn, source_client, name, doc, model=model)
+        summary[name] = {"columns": len(doc["columns"]), "missing": doc["missing"],
+                         "hallucinated": doc["hallucinated"]}
     return summary
 
 

@@ -45,9 +45,8 @@ ETL tool.
 | L3 Human triage | accept/reject/consider → ground truth | `dashboard/app.py`, `app/db` |
 | L4 Monitoring & scoring | severity-weighted DQ score + trend | `app/scoring` |
 
-See **[docs/design-rationale.md](docs/design-rationale.md)** and
-**[docs/artifact-handoff.md](docs/artifact-handoff.md)** for the full design
-rationale and evaluation results.
+The design rationale and the evaluation results are in the dissertation. This
+repository holds the code only.
 
 ---
 
@@ -155,21 +154,29 @@ unavailable.
 
 ```
 backend/app/
-  io/          loader (CSV/Excel, header detection)
-  profiler/    types, stats, keys, relationships, profile, sampling
-  privacy/     pseudonymization
-  rules/       the six checks + engine
-  llm/         client, prompt, auditor, run_audit
-  scoring/     DQ score
-  db/          schema, repository, persistence
-  eval/        injection, baseline, matching, metrics, complementarity, cross_client, figures
-  api.py       FastAPI
-  aliases.py   display aliases
-  export.py    CSV export
-dashboard/app.py   Streamlit UI
-config/            aliases + score weights
-docs/              design rationale, handoff, diagrams
-data/              client exports (gitignored)
+  io/           loader (CSV/Excel, header detection)
+  profiler/     types, stats, keys, relationships, profile, sampling
+  privacy/      pseudonymization
+  rules/        the six checks + engine + plain-English descriptions
+  llm/          client, prompt, auditor, run_audit, feedback, model selection
+  schema_docs/  AI-drafted, human-verified schema documentation
+  monitoring/   recurring issues, trends, projections
+  scoring/      DQ score
+  db/           migrations, repository, persistence, masked hosted copy (sync_cloud)
+  reports/      grouping, wording, audit trail, standard report, Word/PDF
+  chat/         Ask (chat about an audit or an issue) and saved threads
+  auth/         users and roles
+  study/        unmoderated usability study mode
+  eval/         evaluation scripts (T1-T15) and the evidence workbook
+  api.py        FastAPI
+  workspaces.py companies (workspaces)
+  aliases.py    display names for headerless columns
+  export.py     CSV / Excel export
+backend/tests/      pytest suite
+dashboard/          Streamlit app (app.py), theme, logos
+config/             per-company labels, aliases, privacy lists, replay specs, score weights
+tools/              helper scripts outside the framework
+data/, evaluation/  exports and evaluation outputs (git-ignored, never committed)
 ```
 
 ---

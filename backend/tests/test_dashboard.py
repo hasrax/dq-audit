@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from app.db import repository
+from app.study import participants as sp
 
 APP_PATH = Path(__file__).resolve().parents[2] / "dashboard" / "app.py"
 ADMIN = {"id": 0, "username": "pytest-admin", "role": "admin"}
@@ -100,17 +101,52 @@ def test_all_companies_mode_renders(page):
         assert "Choose a company to continue." in text
 
 
-def test_signed_out_users_see_only_the_login_form():
+@pytest.fixture
+def study_signin():
+    """Open or close the study sign-in for one test; the previous setting is restored afterwards."""
+    c = repository.connect()
+    row = c.execute("SELECT value FROM app_settings WHERE key = %s", (sp.SIGNIN_KEY,)).fetchone()
+    yield lambda is_open: sp.set_signin_open(c, is_open)
+    if row:
+        c.execute("UPDATE app_settings SET value = %s WHERE key = %s", (row[0], sp.SIGNIN_KEY))
+    else:
+        c.execute("DELETE FROM app_settings WHERE key = %s", (sp.SIGNIN_KEY,))
+    c.commit()
+    c.close()
+
+
+def test_signed_out_users_see_only_the_login_form(study_signin):
+    study_signin(False)
     at = _app(user=None)
     assert not at.exception
-    # one screen: staff sign-in, and the study code underneath
-    assert sorted(t.label for t in at.text_input) == ["Password", "Study code", "Username"]
+    # the study has finished: staff sign-in only
+    assert sorted(t.label for t in at.text_input) == ["Password", "Username"]
     assert "_pages" not in at.session_state
 
 
-def test_study_link_prefills_the_code():
+def test_open_study_shows_the_code_box_under_the_staff_form(study_signin):
+    study_signin(True)
+    at = _app(user=None)
+    assert not at.exception
+    assert sorted(t.label for t in at.text_input) == ["Password", "Study code", "Username"]
+
+
+def test_old_study_link_after_closing_says_it_has_finished(study_signin):
     from streamlit.testing.v1 import AppTest
 
+    study_signin(False)
+    at = AppTest.from_file(str(APP_PATH), default_timeout=90)
+    at.query_params["study"] = "p03"
+    at.run()
+    assert not at.exception
+    assert "Study code" not in [t.label for t in at.text_input]
+    assert any("study has finished" in c.value for c in at.caption)
+
+
+def test_study_link_prefills_the_code(study_signin):
+    from streamlit.testing.v1 import AppTest
+
+    study_signin(True)
     at = AppTest.from_file(str(APP_PATH), default_timeout=90)
     at.query_params["study"] = "p03"
     at.run()
@@ -129,3 +165,19 @@ def test_reviewer_cannot_open_an_admin_page_by_link():
     at = _app(REVIEWER, page="settings")
     assert not at.exception
     assert "AI model" not in _text(at)
+
+
+def test_schema_review_offers_ai_drafting_when_a_company_has_no_docs():
+    c = repository.connect()
+    row = c.execute(
+        "SELECT w.slug FROM workspaces w WHERE w.kind = 'real' "
+        "AND EXISTS (SELECT 1 FROM uploads u JOIN profiles p ON p.upload_id = u.id WHERE u.source_client = w.slug) "
+        "AND NOT EXISTS (SELECT 1 FROM schema_doc_tables d WHERE d.source_client = w.slug) ORDER BY w.slug LIMIT 1"
+    ).fetchone()
+    c.close()
+    if not row:
+        pytest.skip("every audited company already has schema docs")
+    at = _app(page="schema", company=row[0])
+    assert not at.exception, at.exception
+    assert any((b.key or "").startswith("docs_draft_") for b in at.button)
+    assert "No schema documentation" in " ".join(a.value for a in at.info)

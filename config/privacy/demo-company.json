@@ -1,0 +1,18 @@
+{
+  "_comment": "Demo company (sales and distribution system, monthly exports for the demonstration). Always masked before any AI call or hosted copy: customer and rep names, addresses, phone and fax numbers, e-mail, NIC and VAT numbers, cheque numbers and free-text remarks.",
+  "CustomerMaster": {
+    "mask": ["CustomerName", "Address", "Tel", "VatNo", "ContactName", "Fax", "SVatNo", "Email", "NicNo", "Town"]
+  },
+  "SalesRepMaster": {
+    "mask": ["RepName", "RepAddress", "RepTelMobile", "RepTelResident"]
+  },
+  "InvoiceHeader": {
+    "mask": ["VatNo", "SVatNo", "PONo", "Remarks"]
+  },
+  "ReceiptsHed": {
+    "mask": ["BookReceiptNo", "ReceiptDescription", "ChequeNo", "Remarks"]
+  },
+  "SalesReturnHeader": {
+    "mask": ["Remarks", "AcceptedBy", "Rupees"]
+  }
+}

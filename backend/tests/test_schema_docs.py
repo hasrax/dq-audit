@@ -97,6 +97,7 @@ def conn():
     yield c
     c.execute("DELETE FROM schema_doc_columns WHERE source_client = %s", (TEST_CLIENT,))
     c.execute("DELETE FROM schema_doc_tables WHERE source_client = %s", (TEST_CLIENT,))
+    c.execute("DELETE FROM uploads WHERE source_client = %s", (TEST_CLIENT,))   # cascades to profiles
     c.commit()
     c.close()
 
@@ -129,3 +130,57 @@ def test_store_round_trip_verify_and_regenerate(conn):
     assert "Supplier bill date." in store.get_schema_context(TEST_CLIENT, "GRNHED", conn=conn)
     assert store.doc_stats(conn, TEST_CLIENT)["columns_verified"] == 2
     assert json.loads(json.dumps(store.doc_aliases(conn, TEST_CLIENT))) == {"GRNHED": {"col_2": "Bill Date"}}
+
+
+def test_stored_profile_masks_text_values_but_keeps_numbers_and_earlier_masks():
+    from app.schema_docs.generate import mask_stored_profile
+
+    profile = {"table_name": "Customers", "columns": {
+        "Name": {"type": "varchar", "min": "Amal Perera", "max": "Nimal Silva"},
+        "Region": {"type": "varchar", "min": "MASK_ab12cd34", "max": None},
+        "CreditLimit": {"type": "decimal", "min": 0.0, "max": 5000000.0},
+        "Joined": {"type": "date", "min": "2020-02-02", "max": "2026-07-01"},
+    }}
+    masked = mask_stored_profile(profile, TEST_CLIENT)["columns"]
+    assert masked["Name"]["min"].startswith("MASK_") and "Nimal" not in masked["Name"]["max"]
+    assert masked["Region"]["min"] == "MASK_ab12cd34" and masked["Region"]["max"] is None
+    assert masked["CreditLimit"]["max"] == 5000000.0 and masked["Joined"]["min"] == "2020-02-02"
+    assert profile["columns"]["Name"]["min"] == "Amal Perera"            # the input is not changed
+
+
+def test_draft_from_stored_audits_needs_no_files_and_skips_documented_tables(conn):
+    from app.schema_docs.generate import audited_tables, document_from_audits, stored_profiles
+
+    old = repository.create_upload(conn, "old", TEST_CLIENT, 4)
+    new = repository.create_upload(conn, "new", TEST_CLIENT, 4)
+    rows = [  # (upload, table, column, type, null_count, null_pct, distinct, min, max, mean)
+        (old, "Customers", "Code", "int", 0, 0, 3, "1", "3", 2),
+        (new, "Customers", "Code", "int", 0, 0, 4, "1", "4", 2.5),      # the newest audit wins
+        (new, "Customers", "Name", "varchar", 1, 25, 3, "Amal Perera", "Nimal Silva", None),
+        (old, "Invoices", "InvoiceNo", "int", 0, 0, 10, "100", "109", 104.5),
+    ]
+    conn.cursor().executemany(
+        "INSERT INTO profiles (upload_id, table_name, column_name, data_type, null_count, null_pct, "
+        "distinct_count, min_val, max_val, mean_val) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", rows)
+    conn.commit()
+
+    assert audited_tables(conn, TEST_CLIENT) == ["Customers", "Invoices"]
+    profiles, _ = stored_profiles(conn, TEST_CLIENT)
+    assert list(profiles["Customers"]["columns"]) == ["Code", "Name"]
+    assert profiles["Customers"]["row_count"] == 4                     # 1 empty = 25% of 4 rows
+    assert profiles["Customers"]["primary_key"] == "Code"
+    assert profiles["Invoices"]["row_count"] == 10                     # no empties: largest distinct count
+
+    reply = json.dumps({"table_description": "Customers.", "table_module": "Sales",
+                        "columns": [{"column": "Name", "description": "Customer name.", "confidence": "HIGH"}]})
+    client = FakeClient([reply, reply])
+    done = document_from_audits(conn, TEST_CLIENT, client=client)
+    assert set(done) == {"Customers", "Invoices"} and len(client.calls) == 2
+    assert not any("Amal" in call or "Nimal" in call for call in client.calls)   # text values masked
+    assert '"max": "4"' in client.calls[0]                                       # numbers kept
+    cols = {c["column_name"]: c for c in store.fetch_doc_columns(conn, TEST_CLIENT, "Customers")}
+    assert cols["Name"]["description"] == "Customer name."
+    assert cols["Code"]["description"] == PENDING_DESCRIPTION                   # skipped by the AI: needs review
+
+    again = FakeClient([])
+    assert document_from_audits(conn, TEST_CLIENT, client=again) == {} and again.calls == []

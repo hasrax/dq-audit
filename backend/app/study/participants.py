@@ -18,6 +18,24 @@ from psycopg.rows import dict_row
 
 PILOT_CODE = "P00"
 CODE_RE = re.compile(r"^P\d{2}$")
+SIGNIN_KEY = "study_signin"   # app_settings: "open" shows the study-code box on the sign-in page
+
+
+def signin_open(conn: psycopg.Connection) -> bool:
+    """Whether participants can sign in. Closed unless an admin opens it on the Study page
+    (the study has finished; its codes, events and decisions are all kept)."""
+    row = conn.execute("SELECT value FROM app_settings WHERE key = %s", (SIGNIN_KEY,)).fetchone()
+    return bool(row) and row[0] == "open"
+
+
+def set_signin_open(conn: psycopg.Connection, is_open: bool, updated_by: str | None = None) -> None:
+    conn.execute(
+        "INSERT INTO app_settings (key, value, updated_by) VALUES (%s, %s, %s) "
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, "
+        "updated_at = now()",
+        (SIGNIN_KEY, "open" if is_open else "closed", updated_by),
+    )
+    conn.commit()
 
 TASKS = {
     # Each task says where to go (revised after the P00 pilot: first-time users

@@ -45,7 +45,7 @@ from app.llm.run_audit import audit_directory
 from app.scoring.score import load_weights, score_contributions
 from app.scoring.score import DEFAULT_K, DIMENSION_ALIASES, SEVERITY_POINTS
 from app.schema_docs import store as docs_store
-from app.schema_docs.generate import document_directory
+from app.schema_docs.generate import audited_tables, document_directory, document_from_audits
 from app.schema_docs.prompt import MODULES
 from app.rules.describe import CATEGORY_LABEL
 from app.monitoring import recurrence
@@ -243,8 +243,11 @@ def _render_login(conn) -> None:
                     f'</span>{html.escape(APP_NAME)}</div><div class="auth-title">Sign in</div>',
                     unsafe_allow_html=True)
         _staff_login(conn)
-        st.markdown('<div class="auth-divider"><span>Study participant?</span></div>', unsafe_allow_html=True)
-        _study_login(conn, prefill)
+        if sp.signin_open(conn):
+            st.markdown('<div class="auth-divider"><span>Study participant?</span></div>', unsafe_allow_html=True)
+            _study_login(conn, prefill)
+        elif link:   # an old study link after the study closed
+            st.caption("The usability study has finished. Thank you for taking part.")
 
 
 def _study_login(conn, prefill: str) -> None:
@@ -483,6 +486,14 @@ def _render_study_admin(conn) -> None:
     st.markdown('<div class="page-sub">The unmoderated usability test. Participants sign in with a code, do 5 tasks '
                 'on the study copy, then fill in the questionnaire. Nothing they do touches real data.</div>',
                 unsafe_allow_html=True)
+    is_open = sp.signin_open(conn)
+    want = st.toggle("Participants can sign in", value=is_open, key="study_signin_toggle",
+                     help="Shows the study-code box on the sign-in page. Closed once the study has finished; "
+                          "codes, results and the study copy are kept either way.")
+    if want != is_open:
+        sp.set_signin_open(conn, want, updated_by=_username())
+        st.toast("Study sign-in " + ("opened" if want else "closed"), icon=":material/check:")
+        st.rerun()
     slug = ws.study_workspace(conn)
     study_uploads = repository.list_uploads(conn, source_client=slug) if slug else []
     left, right = st.columns(2)
@@ -1448,7 +1459,8 @@ def _render_thesis_snapshot() -> None:
     """The frozen evaluation results, exactly as reported in the dissertation."""
     from app.eval.export_workbook import SNAPSHOT
     if not SNAPSHOT.exists():
-        st.info("The thesis snapshot has not been frozen yet. It appears here once the evaluation snapshot is taken.")
+        st.info("The thesis snapshot is kept on the researcher's computer: spreadsheets are not uploaded to the "
+                "hosted site. The live numbers are under All companies.")
         return
     tables = _snapshot_tables(SNAPSHOT.stat().st_mtime)
     facts = dict(tables.pop("README").itertuples(index=False, name=None))
@@ -1812,6 +1824,24 @@ def _render_organisation(conn, upload: dict) -> None:
             )
 
 
+def _draft_docs_button(conn, client: str, tables: list[str], label: str) -> None:
+    """Draft schema docs with AI from the statistics stored with the company's audits."""
+    st.caption("About half a minute per table. Only statistics are sent, with text values masked.")
+    if not st.button(label, type="primary", icon=":material/auto_awesome:", key=f"docs_draft_{client}"):
+        return
+    bar = st.progress(0.0, text="Starting…")
+    try:
+        done = document_from_audits(
+            conn, client, tables=tables,
+            progress=lambda i, n, t: bar.progress(i / n, text=f"Drafting {t} (table {i + 1} of {n})…"))
+    except Exception as exc:  # noqa: BLE001 -- e.g. the AI service's limit; finished tables are already saved
+        st.error(f"Drafting stopped: {exc}. Tables finished before this are saved; press the button again "
+                 "later for the rest.")
+        return
+    st.toast(f"{len(done)} table(s) drafted. Check and verify them below.", icon=":material/check_circle:")
+    st.rerun()
+
+
 def _render_schema_review(conn, upload: dict) -> None:
     client = upload["source_client"]
     label = client_label(client)
@@ -1821,13 +1851,19 @@ def _render_schema_review(conn, upload: dict) -> None:
                 'later audits.</div>', unsafe_allow_html=True)
 
     tables = docs_store.fetch_doc_tables(conn, client)
+    documented = {t["table_name"] for t in tables}
+    missing = [t for t in audited_tables(conn, client) if t not in documented]
     if not tables:
-        st.info(
-            f"No schema documentation for {label} yet. On the **New audit** page, tick "
-            "*Draft schema documentation with AI*, or run "
-            "`python -m app.schema_docs.generate <data_dir> --client=<key>`."
-        )
+        st.info(f"No schema documentation for {label} yet. The AI can draft what each table and column means "
+                "from the statistics saved with this company's audits (no files needed); you then check and "
+                "verify it here.", icon=":material/info:")
+        if missing:
+            _draft_docs_button(conn, client, missing, f"Draft with AI ({len(missing)} tables)")
         return
+    if missing:
+        st.caption(f"{len(missing)} table(s) from this company's audits have no documentation yet: "
+                   f"{', '.join(missing)}.")
+        _draft_docs_button(conn, client, missing, "Draft the missing tables with AI")
 
     stats = docs_store.doc_stats(conn, client)
     m = st.columns(4)

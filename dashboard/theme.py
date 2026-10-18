@@ -283,7 +283,7 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 
 /* sign-in (board 9): a dark-green hero on the left, the form on the right; phones: form first */
 .st-key-auth_page {{ max-width: 1200px; margin: 1vh auto 0 auto; }}
-.auth-hero {{ box-sizing: border-box; min-height: 600px; padding: 40px clamp(24px, 4vw, 56px); border-radius: 16px;
+.auth-hero {{ box-sizing: border-box; min-height: 500px; padding: 32px clamp(20px, 3vw, 40px); border-radius: 16px;
   background-color: #0F1E18; background-image: radial-gradient(rgba(127, 204, 164, .10) 1px, transparent 1px);
   background-size: 22px 22px; color: #ECEBE8; display: flex; flex-direction: column; justify-content: space-between;
   gap: 40px; }}
@@ -291,11 +291,11 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
   letter-spacing: -.01em; }}
 .auth-logo .mark svg, .auth-mlogo .mark svg {{ width: 38px; height: 38px; display: block; }}
 .auth-mlogo {{ display: none; color: var(--text); margin-bottom: 16px; }}
-.auth-copy {{ display: flex; flex-direction: column; gap: 22px; max-width: 520px; }}
-.auth-copy .auth-h1 {{ margin: 0; padding: 0; font-size: clamp(2.2rem, 3.8vw, 3.25rem); font-weight: 700; line-height: 1.05;
+.auth-copy {{ display: flex; flex-direction: column; gap: 18px; max-width: 460px; }}
+.auth-copy .auth-h1 {{ margin: 0; padding: 0; font-size: clamp(1.8rem, 2.8vw, 2.5rem); font-weight: 700; line-height: 1.08;
   letter-spacing: -.02em; color: #ECEBE8 !important; }}
 .auth-copy .auth-h1 span {{ color: #7FCCA4 !important; }}
-.auth-copy p {{ margin: 0; font-size: 1.15rem; line-height: 1.5; color: #B9C9C0; }}
+.auth-copy p {{ margin: 0; font-size: 1.02rem; line-height: 1.5; color: #B9C9C0; }}
 .auth-example {{ display: flex; flex-direction: column; gap: 10px; max-width: 440px; padding: 18px 20px;
   background: #1B1E21; border: 1px solid #2D3136; border-radius: 14px; box-shadow: 0 18px 40px rgba(0, 0, 0, .35); }}
 .auth-example .top {{ display: flex; align-items: center; gap: 8px; font-size: .95rem; }}
@@ -308,7 +308,7 @@ div[class*="st-key-"] [data-testid="stVerticalBlockBorderWrapper"],
 .auth-chips {{ margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 8px 10px; }}
 .auth-chips li {{ margin: 0; padding: 4px 12px; border-radius: 999px; border: 1px solid #2F5A45; font-size: .9rem;
   color: #CFE7DA; }}
-.st-key-auth_card {{ max-width: 380px; margin: 0 auto; width: 100%; }}
+.st-key-auth_card {{ max-width: 460px; margin: 0 auto; width: 100%; }}
 .st-key-auth_card [data-testid="stForm"] {{ border: none; padding: 0; }}
 .auth-title {{ font-size: 1.75rem; font-weight: 700; color: var(--text); letter-spacing: -.01em; margin-bottom: 4px; }}
 .auth-divider {{ display: flex; align-items: center; gap: 12px; margin: 12px 0 4px 0; color: var(--faint);

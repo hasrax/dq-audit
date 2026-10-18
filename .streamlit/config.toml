@@ -8,7 +8,7 @@
 
 [theme]
 font = "sans-serif"
-baseFontSize = 16
+baseFontSize = 15   # style sheet: body 15 px
 baseRadius = "0.5rem"
 showWidgetBorder = true
 

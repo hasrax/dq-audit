@@ -236,7 +236,7 @@ def _render_login(conn) -> None:
     st.markdown('<style>[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], '
                 '[data-testid="stExpandSidebarButton"] { display: none !important; }</style>',
                 unsafe_allow_html=True)
-    hero, side = st.container(key="auth_page").columns([1.2, 1], gap="large", vertical_alignment="center")
+    hero, side = st.container(key="auth_page").columns([1, 1.1], gap="large", vertical_alignment="center")
     hero.markdown(_brand_html(), unsafe_allow_html=True)
     with side.container(key="auth_card"):
         st.markdown(f'<div class="auth-mlogo"><span class="mark">{(STATIC / "logo.svg").read_text(encoding="utf-8")}'
@@ -299,7 +299,8 @@ def _render_account_sidebar() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title=APP_NAME, page_icon=str(STATIC / "favicon-64.png"), layout="wide")
+    # SVG, not PNG: the hosted server returned errors for the PNG logo files (18 Oct)
+    st.set_page_config(page_title=APP_NAME, page_icon=str(STATIC / "logo.svg"), layout="wide")
     ui.apply(st.context.theme.type)  # follows the viewer's Light / Dark setting
     st.markdown(ui.css(), unsafe_allow_html=True)
     try:
@@ -314,7 +315,7 @@ def main() -> None:
         _apply_appearance("Dark", only_if_unset=True)   # dark is the default for a browser with no choice yet
         _render_login(conn)
         return
-    st.logo(str(STATIC / f"wordmark-on-{ui.MODE}.png"), size="large", icon_image=str(STATIC / "logo.svg"))
+    st.logo(str(STATIC / f"logo-{ui.MODE}.svg"), size="large", icon_image=str(STATIC / "logo.svg"))
     if _is_participant():
         _participant_main(conn)
         return
@@ -772,7 +773,7 @@ def _render_portfolio(conn) -> None:
         for n, name in enumerate(sorted({t[0] for t in trend})):
             pts = [t for t in trend if t[0] == name]
             fig.add_scatter(x=[p[1] for p in pts], y=[float(p[2]) for p in pts], mode="lines+markers", name=name,
-                            line=dict(color=palette[n % len(palette)], width=2.5, shape="spline"),
+                            line=dict(color=palette[n % len(palette)], width=2.5),
                             hovertemplate=name + " · %{x|%d %b %Y}: %{y:.0f}/100<extra></extra>")
         fig.update_yaxes(range=[0, 100])
         st.plotly_chart(ui.style_figure(fig, 280).update_layout(showlegend=True, legend=dict(orientation="h", y=-0.2)),

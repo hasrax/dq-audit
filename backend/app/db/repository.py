@@ -279,19 +279,20 @@ def _rescore_for(issue_ids: list[int], conn: psycopg.Connection) -> None:
 
 
 def set_issue_statuses(conn: psycopg.Connection, issue_ids: list[int], status: str,
-                       reviewed_by: str | None = None) -> int:
-    """Bulk triage: set many issues to one status in a single statement."""
+                       reviewed_by: str | None = None, user_note: str | None = None) -> int:
+    """Bulk triage: set many issues to one status in a single statement.
+    user_note, when given, is saved on every issue; otherwise each keeps its own note."""
     if status not in VALID_STATUSES:
         raise ValueError(f"invalid status: {status!r}")
     ids = [int(i) for i in issue_ids]
     if not ids:
         return 0
     conn.execute(
-        "UPDATE issues SET status = %s, "
+        "UPDATE issues SET status = %s, user_note = COALESCE(%s, user_note), "
         "reviewed_at = CASE WHEN %s = 'flagged' THEN NULL ELSE now() END, "
         "reviewed_by = CASE WHEN %s = 'flagged' THEN NULL ELSE %s END "
         "WHERE id = ANY(%s)",
-        (status, status, status, reviewed_by, ids),
+        (status, user_note, status, status, reviewed_by, ids),
     )
     conn.commit()
     _rescore_for(ids, conn)

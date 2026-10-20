@@ -106,3 +106,13 @@ def test_bulk_invalid_status_rejected(seeded):
     conn, uid = seeded
     with pytest.raises(ValueError):
         repository.set_issue_statuses(conn, [1], "nope")
+
+
+def test_bulk_note_is_saved_on_every_issue_and_kept_when_not_given(seeded):
+    conn, uid = seeded
+    ids = [i["id"] for i in repository.fetch_issues(conn, uid)]
+    repository.set_issue_statuses(conn, ids, "rejected", reviewed_by="tester", user_note="placeholder field")
+    assert {i["user_note"] for i in repository.fetch_issues(conn, uid)} == {"placeholder field"}
+    repository.set_issue_statuses(conn, ids, "flagged")            # undo: no note given, so notes stay
+    assert {i["user_note"] for i in repository.fetch_issues(conn, uid)} == {"placeholder field"}
+    assert all(i["status"] == "flagged" and i["reviewed_by"] is None for i in repository.fetch_issues(conn, uid))

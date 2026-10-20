@@ -288,7 +288,10 @@ def main() -> None:
     wb = RES / "evaluation_results.xlsx"
     if wb.exists():
         readme = pd.read_excel(wb, sheet_name="README", header=None).fillna("")
-        k.table(readme.iloc[:, :5].astype(str), "Evidence workbook README (generation time, commit, model, file hashes)")
+        readme = readme.iloc[:, :5].astype(str)
+        readme = readme[~readme[0].str.contains(r"Tasks v\d", regex=True)]   # one study: per-version tabs not listed
+        k.table(readme, "Evidence workbook README (excerpt: generation time, commit, model, and the file behind "
+                        "each table with its SHA-256)")
 
     k.doc.save(OUT / "Appendix_pack.docx")
     (OUT / "Appendix_pack.md").write_text("\n\n".join(k.md), encoding="utf-8")

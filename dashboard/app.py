@@ -999,6 +999,8 @@ def _render_triage(conn, upload: dict) -> None:
     by_action = {a: [i for i in issues if grouping.action_category(i, unused, mostly_blank) == a]
                  for a in grouping.ACTIONS}
     views = [a for a in ("fix_now", "check", "can_wait") if by_action[a]] + ["all"]
+    if st.session_state.get("triage_action") not in (None, *views):   # its last issue was just decided
+        st.session_state["triage_action"] = "all"
     view = st.segmented_control(
         "Show", views, default=views[0], key="triage_action", label_visibility="collapsed",
         format_func=lambda v: f"All issues ({len(issues)})" if v == "all"
@@ -1006,8 +1008,10 @@ def _render_triage(conn, upload: dict) -> None:
     fields = grouping.unused_fields(issues, unused)
     if fields:
         n_fields = sum(len(c) for c in fields.values())
-        with st.expander(f"{n_fields} field(s) are never filled in — listed here once, not as separate issues",
-                         icon=":material/info:"):
+        # fixed title + key: stays open across decisions (a count in the title would make it a new section)
+        with st.expander("Fields that are never filled in (listed here once, not as separate issues)",
+                         icon=":material/info:", key="exp_unused_fields", on_change="rerun"):
+            st.caption(f"{n_fields} field(s).")
             st.caption("These columns are empty in (almost) every row, so they are probably not used by the "
                        "business. They still appear under All issues.")
             for table, cols in fields.items():
@@ -1017,6 +1021,8 @@ def _render_triage(conn, upload: dict) -> None:
         issues = by_action[view]
     types = Counter(grouping.type_label(i["dimension"]) for i in issues)
     if len(types) > 1:   # plain issue types, so the mix is visible at a glance
+        if st.session_state.get(f"triage_type_{view}") not in (None, *types):
+            st.session_state[f"triage_type_{view}"] = None
         pick = st.pills("Issue types", list(types), selection_mode="single", key=f"triage_type_{view}",
                         format_func=lambda t: f"{t} {types[t]}", label_visibility="collapsed")
         if pick:
@@ -1057,7 +1063,7 @@ def _render_triage(conn, upload: dict) -> None:
                 help="Every decision in this audit: issue, decision, reviewer, time and note (CSV).",
             )
             _render_selection_bar(conn, issues)
-            _render_bulk_actions(conn, [i["id"] for i in issues])
+            _render_bulk_actions(conn, issues)
     else:
         st.info("No issues match these filters. Try setting **Status** to *All*, or show **All issues**.")
     # mined value-order checks are often coincidental: one folded section at the bottom
@@ -1065,7 +1071,9 @@ def _render_triage(conn, upload: dict) -> None:
     for item in grouping.by_priority(grouping.group([i for i in issues if not grouping.is_value_order(i)])):
         _render_triage_item(conn, item, aliases)      # most important first
     if order:
-        with st.expander(f"Unusual value order ({len(order)})", icon=":material/swap_vert:"):
+        with st.expander("Unusual value order", icon=":material/swap_vert:", key="exp_value_order",
+                         on_change="rerun"):
+            st.caption(f"{len(order)} issue(s).")
             st.caption("One value is normally not larger than another in the same row (for example a discount "
                        "and a total), but some rows break that pattern. Many of these patterns are coincidence, "
                        "so check them last.")
@@ -1101,7 +1109,8 @@ def _group_card(conn, item: dict, aliases: dict) -> None:
 </div>''',
             unsafe_allow_html=True,
         )
-        with st.expander(f"Show the {len(item['issues'])} issues"):
+        # fixed title + key (the count is on the card above): stays open while its issues are decided
+        with st.expander("Show the issues in this group", key=f"exp_grp_{key}", on_change="rerun"):
             if not _is_participant():
                 ids = [i["id"] for i in item["issues"]]
                 st.button(f"Select all {len(ids)} in this group", key=f"selgrp_{key}", icon=":material/done_all:",
@@ -2429,14 +2438,24 @@ def _set_picks(issue_ids: list[int], value: bool) -> None:
 
 
 def _decide_picked(conn, issue_ids: list[int], status: str) -> None:
-    repository.set_issue_statuses(conn, issue_ids, status, reviewed_by=_username())
+    note = (st.session_state.get("sel_note") or "").strip() or None   # one note for all of them (optional)
+    repository.set_issue_statuses(conn, issue_ids, status, reviewed_by=_username(), user_note=note)
     _set_picks(issue_ids, False)
+    st.session_state["sel_note"] = ""
     st.session_state["flash"] = f"{len(issue_ids)} issue(s) marked {ui.STATUS[status][0].lower()}"
 
 
+def _undo(conn, issue_id: int) -> None:
+    """Take back a decision: the issue goes back to To review (its note is kept)."""
+    issue = repository.fetch_issue(conn, issue_id)
+    repository.update_issue_status(conn, issue_id, "flagged", (issue or {}).get("user_note"))
+    st.session_state["flash"] = f"Issue #{issue_id} is back to To review"
+
+
 def _render_selection_bar(conn, issues: list[dict]) -> None:
-    """Tick several issues (after checking them), then decide them in one go."""
-    shown = [i["id"] for i in issues]
+    """Tick several issues still to review (after checking them), then decide them in one go.
+    Decided issues cannot be ticked: Undo first, so a decision is never overwritten by accident."""
+    shown = [i["id"] for i in issues if i["status"] == "flagged"]
     picked = [i for i in shown if st.session_state.get(f"pick_{i}")]
     # once something is ticked, the bar floats at the bottom of the screen (stays in reach while scrolling)
     with st.container(border=True, key="selection_bar_active" if picked else "selection_bar"):
@@ -2452,26 +2471,34 @@ def _render_selection_bar(conn, issues: list[dict]) -> None:
             uns.button("Unsure", key="sel_uns", icon=":material/help:", width="stretch",
                        on_click=_decide_picked, args=(conn, picked, "considered"))
             clear.button("Clear", key="sel_clear", width="stretch", on_click=_set_picks, args=(picked, False))
+            st.text_input("Note for all selected (optional)", key="sel_note",
+                          placeholder="Why, for example: placeholder field, not used by the business")
         else:
             text, all_b = st.columns([4, 1.2], vertical_alignment="center")
-            text.caption("Tick the issues you have checked, then accept, reject or mark them unsure together.")
-            all_b.button("Select all shown", key="sel_all", width="stretch", on_click=_set_picks, args=(shown, True))
+            text.caption("Tick the issues you have checked, then accept, reject or mark them unsure together "
+                         "(with one note for all, if you like). Decided issues can't be ticked: use Undo first.")
+            all_b.button(f"Select all {len(shown)} to review", key="sel_all", width="stretch",
+                         disabled=not shown, on_click=_set_picks, args=(shown, True))
 
 
-def _render_bulk_actions(conn, issue_ids: list[int]) -> None:
-    with st.expander(f"Bulk actions: apply to all {len(issue_ids)} shown", icon=":material/bolt:"):
+def _render_bulk_actions(conn, issues: list[dict]) -> None:
+    todo = [i["id"] for i in issues if i["status"] == "flagged"]
+    done = [i["id"] for i in issues if i["status"] != "flagged"]
+    with st.expander("Bulk actions", icon=":material/bolt:", key="exp_bulk", on_change="rerun"):
+        st.caption(f"{len(todo)} still to review and {len(done)} decided in this view.")
         cols = st.columns(4)
         actions = [
-            ("Accept all", "accepted", "bulk_acc", ":material/check:"),
-            ("Reject all", "rejected", "bulk_rej", ":material/close:"),
-            ("Unsure for all", "considered", "bulk_con", ":material/help:"),
-            ("Reset all", "flagged", "bulk_reset", ":material/undo:"),
+            ("Accept all", "accepted", "bulk_acc", ":material/check:", todo),
+            ("Reject all", "rejected", "bulk_rej", ":material/close:", todo),
+            ("Unsure for all", "considered", "bulk_con", ":material/help:", todo),
+            ("Undo all decided", "flagged", "bulk_reset", ":material/undo:", done),
         ]
-        for col, (label, status, key, icon) in zip(cols, actions):
-            if col.button(label, key=key, icon=icon, width="stretch"):
-                repository.set_issue_statuses(conn, issue_ids, status, reviewed_by=_username())
+        for col, (label, status, key, icon, ids) in zip(cols, actions):
+            if col.button(label, key=key, icon=icon, width="stretch", disabled=not ids):
+                repository.set_issue_statuses(conn, ids, status, reviewed_by=_username())
                 st.rerun()
-        st.caption("Applies to the current filtered view. Reversible: filter again and reset at any time.")
+        st.caption("Accept / Reject / Unsure apply only to the issues still to review in this view; decided ones "
+                   "are never overwritten. Undo puts the decided ones shown back to To review.")
 
 
 def _trend_html(issue: dict, history: list[dict] | None, projection: dict | None) -> str:
@@ -2533,10 +2560,11 @@ def _issue_row(conn, issue: dict, aliases: dict) -> None:
     row = st.container(key=f"irow_{issue['id']}")   # phones: actions wrap under the text
     if _is_participant():
         text, decide_a, decide_r, open_b = row.columns([8.4, 0.75, 0.75, 1.1], vertical_alignment="center")
-    else:   # staff can tick several issues and decide them together
+    else:   # staff can tick several issues still to review and decide them together
         pick, text, decide_a, decide_r, open_b = row.columns([0.32, 8.1, 0.75, 0.75, 1.1],
                                                              vertical_alignment="center")
-        pick.checkbox("Select", key=f"pick_{issue['id']}", label_visibility="collapsed")
+        if issue["status"] == "flagged":
+            pick.checkbox("Select", key=f"pick_{issue['id']}", label_visibility="collapsed")
     text.markdown(
         f'''<div class="issue-row" style="--sev:{sev_color}">
   <div class="top"><span class="loc"><span class="dot" style="background:{sev_color}"></span>{_location_html(issue, aliases)}</span>
@@ -2546,12 +2574,16 @@ def _issue_row(conn, issue: dict, aliases: dict) -> None:
 </div>''',
         unsafe_allow_html=True,
     )
-    if decide_a.button("", key=f"acc_{issue['id']}", icon=":material/check:", help="Accept — this is a real issue",
-                       width="stretch"):
-        _decide(conn, issue["id"], "accepted")
-    if decide_r.button("", key=f"rej_{issue['id']}", icon=":material/close:", help="Reject — not a problem",
-                       width="stretch"):
-        _decide(conn, issue["id"], "rejected")
+    if issue["status"] != "flagged" and not _is_participant():   # decided: only Undo, never a second decision
+        decide_a.button("", key=f"undo_{issue['id']}", icon=":material/undo:", width="stretch",
+                        help="Undo this decision: back to To review", on_click=_undo, args=(conn, issue["id"]))
+    else:
+        if decide_a.button("", key=f"acc_{issue['id']}", icon=":material/check:",
+                           help="Accept — this is a real issue", width="stretch"):
+            _decide(conn, issue["id"], "accepted")
+        if decide_r.button("", key=f"rej_{issue['id']}", icon=":material/close:", help="Reject — not a problem",
+                           width="stretch"):
+            _decide(conn, issue["id"], "rejected")
     if open_b.button("Open", key=f"open_{issue['id']}", icon=":material/open_in_full:", width="stretch"):
         _study_log("detail_opened", {"issue_id": issue["id"], "severity": issue["severity"]})
         _issue_dialog(conn, issue["id"])
@@ -2618,6 +2650,24 @@ def _issue_dialog(conn, issue_id: int) -> None:
             st.caption("No example rows were recorded for this issue.")
 
     st.markdown('<div class="section-label">Your decision</div>', unsafe_allow_html=True)
+    if issue["status"] != "flagged" and not _is_participant():
+        # already decided: show it, and allow only Undo (back to To review) -- never a silent second decision
+        label = ui.STATUS[issue["status"]][0]
+        who = f" by {issue['reviewed_by']}" if issue.get("reviewed_by") else ""
+        when = f" on {issue['reviewed_at']:{DATE_FORMAT} %H:%M}" if issue.get("reviewed_at") else ""
+        st.markdown(f"**{html.escape(label)}**{html.escape(who + when)}.")
+        if issue.get("user_note"):
+            st.caption(f"Note: {issue['user_note']}")
+        if st.button("Undo decision", key=f"dlg_undo_{issue_id}", icon=":material/undo:",
+                     help="Back to To review; then decide again"):
+            _undo(conn, issue_id)
+            st.rerun()
+        _render_history(conn, issue_id)
+        if st.button("Not sure? Discuss this issue in chat", key=f"dlg_chat_{issue_id}", icon=":material/forum:",
+                     type="tertiary"):
+            _open_issue_thread(conn, issue, aliases)
+            st.switch_page(st.session_state["_pages"]["ask"])
+        return
     # the three answers look the same, so the layout does not nudge reviewers towards one (precision)
     note_col, btn_col = st.columns([2.2, 1], vertical_alignment="top")
     note = note_col.text_area("Why do you think so? (optional)", value=issue.get("user_note") or "",

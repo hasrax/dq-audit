@@ -24,6 +24,8 @@ ROOT = Path(__file__).resolve().parents[3]
 RES = ROOT / "evaluation" / "results"
 OUT = ROOT / "evaluation" / "appendix"
 SHOTS = ROOT / "output" / "study-screens"
+APPX_SHOTS = ROOT / "evaluation" / "screenshots" / "appendix"
+TESTING = ROOT / "evaluation" / "testing"
 FORM = next(iter(sorted((ROOT / "evaluation").glob("*usability questionnaire*.xlsx"))), None)
 T11 = ROOT / "evaluation" / "T11_schema_check_CompanyA.xlsx"
 
@@ -51,16 +53,39 @@ CLARITY = ["The explanation of each issue was easy to understand.", "I understoo
            "The report was clear enough to share with a manager."]
 OPEN = ["What was the most useful part of the system?", "What was the most confusing part?",
         "If you could change one thing, what would it be?", "Any other comments?"]
-SCREENS = [
-    ("Sign-in page (laptop, light theme)", "2026-10-10/laptop/d_login_light.png"),
-    ("Study: task card and overview on a phone (iteration 1)", "2026-10-10/phone/m04_task1_top.png"),
-    ("Study: issue details on a phone (iteration 1)", "2026-10-10/phone/m06_issue_dialog.png"),
-    ("Study: chat answer comparing masked example rows", "2026-10-10/phone/m09_task3_chat.png"),
-    ("Iteration 2: 'Needs attention' view with grouped issues (phone)", "2026-10-12-v2/phone_triage_v2.png"),
-    ("After the study: importance order and issue-type chips", "2026-10-12-v2/laptop_triage_priority.png"),
-    ("After the study: action categories (Fix now / Can wait / All)", "2026-10-12-v2/laptop_triage_actions.png"),
-    ("After the study: severity and Rule/AI labels with multi-select", "2026-10-12-v2/laptop_triage_labels_multiselect.png"),
+SCREENS = [   # (caption, file); phone screenshots are placed narrower
+    ("Study: information and consent screen (laptop)", APPX_SHOTS / "Study_1_SignIn.png"),
+    ("Study: task card above the study copy (phone)", APPX_SHOTS / "Study_2_TaskCard.png"),
+    ("Study: issue details (phone)", SHOTS / "2026-10-10/phone/m06_issue_dialog.png"),
+    ("Study: chat answer comparing masked example rows (phone)", SHOTS / "2026-10-10/phone/m09_task3_chat.png"),
+    ("Updated issue list: grouped issues under 'Needs attention' (phone)", SHOTS / "2026-10-12-v2/phone_triage_v2.png"),
+    ("Study administration: participant sessions (P00 = pilot)", APPX_SHOTS / "Study_3_Sessions.png"),
+    ("After the study: importance order and issue-type chips", SHOTS / "2026-10-12-v2/laptop_triage_priority.png"),
+    ("After the study: action categories (Fix now / Can wait / All)", SHOTS / "2026-10-12-v2/laptop_triage_actions.png"),
+    ("After the study: severity and Rule/AI labels with multi-select",
+     SHOTS / "2026-10-12-v2/laptop_triage_labels_multiselect.png"),
 ]
+PHONE_SHOTS = {"Study_2_TaskCard.png", "m06_issue_dialog.png", "m09_task3_chat.png", "phone_triage_v2.png"}
+
+
+def md_tables(path: Path, first_cell: str) -> pd.DataFrame | None:
+    """Rows of the Markdown tables in a file whose first cell is first_cell + a number (e.g. F12, D3)."""
+    if not path.exists():
+        return None
+    header, body = None, []
+    for ln in path.read_text(encoding="utf-8").splitlines():
+        if not ln.startswith("|") or set(ln.replace("|", "").strip()) <= {"-", " "}:
+            continue
+        cells = [c.strip().replace("**", "") for c in ln.strip().strip("|").split("|")]
+        if cells[0].startswith(first_cell) and cells[0][len(first_cell):].isdigit():
+            body.append(cells)
+        elif header is None and cells[0] in ("#", "No."):
+            header = cells
+    if not body:
+        return None
+    width = max(len(r) for r in body)
+    header = (header or [f"col{i}" for i in range(width)])[:width]
+    return pd.DataFrame([r + [""] * (width - len(r)) for r in body], columns=header)
 
 
 class Pack:
@@ -112,7 +137,7 @@ class Pack:
         cap = f"Figure {self.fig}. {caption}"
         self.doc.add_picture(str(path), width=Inches(width))
         self.doc.add_paragraph(cap).runs[0].italic = True
-        self.md.append(f"**{cap}** (image file: `{path.relative_to(ROOT)}`)")
+        self.md.append(f"**{cap}**")
 
     def csv(self, name: str) -> pd.DataFrame | None:
         p = RES / name
@@ -143,20 +168,21 @@ def main() -> None:
               + [f"Open question: {q}" for q in OPEN])
 
     k.h("Appendix B. Usability study results")
+    k.p("One unmoderated study with 15 participants (P01-P15) and 14 completed questionnaires. P00 was the pilot "
+        "session and is not counted. P05 did not submit the questionnaire. After the first seven sessions the issue "
+        "list was updated (grouped issues and plainer wording); the tasks and the questionnaire stayed the same.")
     pp = k.csv("usability.csv")
     if pp is not None:
-        keep = [c for c in pp.columns if c not in ("task1_answer", "browser")]
-        k.table(pp[keep], "Per-participant results (system-confirmed tasks, minutes, task seconds)")
-    for v in ("v1", "v2"):
-        d = k.csv(f"usability_tasks_{v}.csv")
-        if d is not None:
-            k.table(d, f"Task completion, iteration {v}")
-            k.figure(RES / f"fig_task_completion_{v}.png", f"Task completion, iteration {v}", 5.5)
+        keep = [c for c in pp.columns if c not in ("task1_answer", "browser", "version")]
+        k.table(pp[keep], "Per-participant results (P01-P15): tasks done and system-confirmed, minutes, task seconds")
+    d = k.csv("usability_tasks.csv")
+    if d is not None:
+        k.table(d, "Task completion (15 participants)")
+        k.figure(RES / "fig_task_completion.png", "Task completion: self-reported and system-confirmed", 5.5)
     sus = k.csv("sus_scores.csv")
     if sus is not None:
-        cols = [c for c in ("code", "role", "erp_experience", "sus", "C1", "C2", "C3", "C4", "C5", "version")
-                if c in sus.columns]
-        k.table(sus[cols], "SUS score and clarity ratings per participant")
+        cols = [c for c in ("code", "role", "erp_experience", "sus", "C1", "C2", "C3", "C4", "C5") if c in sus.columns]
+        k.table(sus[cols], "SUS score and clarity ratings per participant (14 questionnaires; P05 did not submit)")
         k.figure(RES / "fig_sus.png", "SUS scores per participant (benchmark 68)", 5.5)
     integ = k.csv("integrity.csv")
     if integ is not None:
@@ -193,10 +219,10 @@ def main() -> None:
                       ("ai_stability_pairs.csv", "Pairwise Jaccard similarity between AI runs (strict matching)"),
                       ("injection_coverage.csv", "Injection coverage demonstration (planted errors)"),
                       ("projection_error.csv", "Trend projection error"),
-                      ("reproducibility.csv", "Reproducibility and transferability across Companies A-F")):
+                      ("reproducibility.csv", "Reproducibility and transferability across Companies A-F (latest audit each)")):
         d = k.csv(name)
         if d is not None:
-            k.table(d, cap)
+            k.table(d.drop(columns=[c for c in ("hosted",) if c in d.columns]), cap)
     k.figure(RES / "fig_ai_stability.png", "How often each AI finding recurred across three runs", 5.0)
     k.figure(RES / "fig_injection_coverage.png", "Planted-error coverage by detector", 5.5)
 
@@ -217,11 +243,48 @@ def main() -> None:
     if pc.exists() and "## Note" in pc.read_text(encoding="utf-8"):
         k.p(pc.read_text(encoding="utf-8").split("## Note")[1].strip())
 
-    k.h("Appendix F. Screenshots of the artefact")
-    for cap, rel in SCREENS:
-        k.figure(SHOTS / rel, cap, 3.0 if "phone" in rel else 6.0)
+    k.h("Appendix F. Second-reviewer results (T12 agreement, T4 recall)")
+    k.p("One second reviewer (R2, data and operations role) worked blind to the detector and to the researcher's "
+        "decisions, on Google Sheets with real column names and masked values.")
+    d = k.csv("agreement.csv")
+    if d is not None:
+        k.table(d, "Triage agreement: researcher vs R2 (Cohen's kappa)")
+    agr = RES / "agreement.md"
+    if agr.exists():
+        txt = agr.read_text(encoding="utf-8")
+        for section, cap in (("## Confusion", "Decisions compared (rows = researcher, columns = R2)"),
+                             ("## Disagreements", "Disagreements with R2's reasons")):
+            if section in txt:
+                part = txt.split(section, 1)[1].split("\n## ")[0]
+                lines = [ln for ln in part.splitlines() if ln.startswith("|")]
+                if len(lines) > 2:
+                    hdr = [c.strip() for c in lines[0].strip("|").split("|")]
+                    body = [[c.strip() for c in ln.strip("|").split("|")] for ln in lines[2:]]
+                    k.table(pd.DataFrame(body, columns=hdr), cap)
+    d = k.csv("recall.csv")
+    if d is not None:
+        k.table(d[d["rows_rated"] > 0], "Recall spot-check: problems found in rows the system did not flag (R2)")
+        k.p("The researcher's own 200-row recall pass was not completed, so only R2's 50-row subset is reported.")
 
-    k.h("Appendix G. Evidence trail")
+    k.h("Appendix G. Testing (T1 functional checklist, manual testing, T14 automated tests)")
+    d = md_tables(TESTING / "T1_functional_checklist.md", "F")
+    if d is not None:
+        k.table(d, f"Functional checklist ({len(d)} functions): how each was verified")
+    d = md_tables(TESTING / "manual_testing_log.md", "D")
+    if d is not None:
+        k.table(d, f"Defects found by manual and browser testing ({len(d)}, all fixed)")
+    d = k.csv("automated_tests.csv")
+    if d is not None:
+        comp = (d.groupby("component", sort=False)[["tests", "passed", "failed", "skipped"]].sum().reset_index()
+                .assign(files=d.groupby("component", sort=False).size().values))
+        comp = comp[["component", "files", "tests", "passed", "failed", "skipped"]]
+        k.table(comp, f"Automated tests by component ({int(comp['tests'].sum())} tests, all passed)")
+
+    k.h("Appendix H. Screenshots of the artefact")
+    for cap, path in SCREENS:
+        k.figure(path, cap, 3.0 if path.name in PHONE_SHOTS else 6.0)
+
+    k.h("Appendix I. Evidence trail")
     wb = RES / "evaluation_results.xlsx"
     if wb.exists():
         readme = pd.read_excel(wb, sheet_name="README", header=None).fillna("")
